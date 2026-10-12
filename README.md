@@ -4,7 +4,7 @@
 
 ### Intelligent Assistive Navigation for the Visually Impaired
 
-*Real-time object detection · Monocular depth estimation · LLM reasoning · Voice interaction · GPS navigation*
+*Real-time object detection · Monocular depth estimation · LLM reasoning · Voice interaction · navigation*
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![YOLOv8](https://img.shields.io/badge/YOLOv8n-Ultralytics-8A2BE2?style=flat-square)](https://ultralytics.com)
@@ -33,7 +33,6 @@ No stereo cameras. No LiDAR. No custom sensors. Just a standard RGB camera and a
 [FRONT] 6 persons      →  "Group of persons ahead"
 [ALERT] car at 0.8m    →  Beep + "Warning: car ahead coming fast"
 [VOICE] "I need water" →  "Goal water is active. Searching for bottle, cup, sink..."
-[GPS]   "Take me to the pharmacy" → "Shortest path: 400m, 5 minutes walking"
 ```
 
 ---
@@ -57,7 +56,6 @@ No stereo cameras. No LiDAR. No custom sensors. Just a standard RGB camera and a
 
 **🎙️ Voice Interaction (Push-To-Talk)**
 - Hold `V` to speak a general command or question
-- Hold `G` to request GPS navigation
 - Hold `R` to engage "Remember Mode" — point the camera at any custom object/person to capture exact image data
 - Zero-latency mic pre-warming — no activation delay
 - Audio ducking: speech volume lowers while the mic is open
@@ -76,9 +74,7 @@ No stereo cameras. No LiDAR. No custom sensors. Just a standard RGB camera and a
 - **Real-Time Object "Training"**: Mathematical MobileNetV3 vector embeddings immediately swap generic YOLO labels (e.g. "person") for your custom aliases (e.g. "Paavan") on-the-fly, requiring zero fine-tuning epochs and fully avoiding catastrophic forgetting
 - Goal system tracks user needs and scans for matching items
 
-**🧭 GPS Navigation**
-- Google Maps walking directions via voice command
-- Selects shortest route from multiple alternatives
+**🧭 Navigation**
 - Returns step-by-step instructions as spoken audio
 
 **📷 Multi-Camera Support**
@@ -102,7 +98,6 @@ No stereo cameras. No LiDAR. No custom sensors. Just a standard RGB camera and a
 | Text-to-Speech | pyttsx3 (SAPI5, offline) |
 | Speech Recognition | SpeechRecognition + PyAudio |
 | Keyboard Listener | pynput |
-| GPS Navigation | Google Maps Directions API |
 | Video Processing | OpenCV |
 | Deep Learning | PyTorch |
 | Custom Recognition | MobileNetV3 Vector Embeddings (torchvision / Cosine Similarity) |
@@ -137,9 +132,8 @@ VISIONA/
 ├── agents/
 │   ├── orchestrator.py             LangChain agent engine + confirmation system
 │   └── tools/
-│       └── vision_tools.py         9 LangChain tools (memory, search, GPS, goals)
+│       └── vision_tools.py         9 LangChain tools (memory, search, goals)
 ├── services/
-│   ├── google_maps.py              Google Maps Directions API wrapper
 │   └── vector_db.py                Object signature storage (placeholder)
 ├── sample-vid/                     Test video files
 ├── yolov8n.pt                      YOLO model weights
@@ -224,7 +218,6 @@ VISIONA/
 │      query_past_detections  →  15-min visual memory         │
 │      set_search_intent      →  YOLO target seeking          │
 │      set_persistent_goal    →  proactive object scanning    │
-│      calculate_route        →  Google Maps directions       │
 │      save_object_signature  →  custom object labeling       │
 │  • Groq LLaMA 3.3 70B synthesizes final spoken response     │
 └─────────────────────────────────────────────────────────────┘
@@ -261,11 +254,9 @@ Edit `.env`:
 
 ```env
 GROQ_API_KEY="your_groq_api_key_here"
-MAPS_API_KEY="your_google_maps_api_key_here"
 ```
 
 - Free Groq key: [console.groq.com](https://console.groq.com)
-- Google Maps key: [console.cloud.google.com](https://console.cloud.google.com) — enable Directions API
 - Both are optional. The system runs without them using offline fallbacks.
 
 **4. Run**
@@ -289,7 +280,6 @@ The default config uses `sample-vid/sample3.mp4`. To use a live webcam, set `SOU
 | Key | Action |
 |---|---|
 | Hold `V` | Open mic for general AI command or question |
-| Hold `G` | Open mic for GPS navigation request |
 | Hold `R` | Open mic for Remember Mode to capture and learn custom objects |
 | `ESC` | Quit |
 
@@ -301,7 +291,7 @@ The default config uses `sample-vid/sample3.mp4`. To use a live webcam, set `SOU
 | "I need water" | Sets persistent goal, searches for bottle/cup/sink |
 | "where is the exit?" | Searches for door/stairs |
 | "what is around me?" | Describes current scene |
-| "take me to the pharmacy" | Google Maps walking directions |
+| "take me to the pharmacy" | walking directions |
 | "this is my water bottle" | Labels the nearest bottle in memory |
 | "where did I leave my keys?" | Searches 15-minute visual memory |
 | Any question | Routed to LLM with full scene context |
@@ -370,7 +360,7 @@ After speaking about a direction, a penalty of 30 points is applied to it. Penal
 1. Voice command arrives via PTT
 2. LLM decides which tool(s) to call
 3. If intent is ambiguous, asks "Asking for [intent]?" before executing
-4. Tools execute (memory lookup, YOLO search, GPS, goal setting)
+4. Tools execute (memory lookup, YOLO search, goal setting)
 5. LLM synthesizes a single spoken response from tool results
 
 ---
@@ -423,7 +413,6 @@ Every session saved to `logs/session_YYYYMMDD_HHMMSS.jsonl`:
 - [x] MobileNetV3 vector embeddings for custom object recognition
 - [x] Real-time label swapping (zero fine-tuning, no catastrophic forgetting)
 - [x] Persistent goal system (proactive scanning)
-- [x] Google Maps GPS navigation (shortest path selection)
 - [x] Session logging (JSONL telemetry)
 - [x] Remember Mode (R key) - capture and learn custom objects/people
 - [x] Contextual curiosity (proactive assistance suggestions)
