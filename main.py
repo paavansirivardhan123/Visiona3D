@@ -151,7 +151,6 @@ class VisionaApp:
         self.speech.speak("Visiona AI ready.")
         print("\n  [System] Visiona AI Initialized.")
         print("  [System] V (Hold) = General AI reasoning / needs.")
-        print("  [System] G (Hold) = Dedicated GPS Navigation.")
         print("  [System] Controls: ESC = quit\n")
 
         # Keyboard listener for PTT
@@ -165,10 +164,6 @@ class VisionaApp:
                     if not self._mic_active:
                         self._mic_mode = "LLM"
                         self.voice.start_recording()
-                elif key.char == 'g':
-                    if not self._mic_active:
-                        self._mic_mode = "MAPS"
-                        self.voice.start_recording()
                 elif key.char.lower() == 'r':
                     if not self._mic_active:
                         self._mic_mode = "REMEMBER"
@@ -180,8 +175,6 @@ class VisionaApp:
         try:
             if hasattr(key, 'char'):
                 if key.char == 'v' and self._mic_mode == "LLM":
-                    self.voice.stop_recording()
-                elif key.char == 'g' and self._mic_mode == "MAPS":
                     self.voice.stop_recording()
                 elif key.char.lower() == 'r' and self._mic_mode == "REMEMBER":
                     self.voice.stop_recording()

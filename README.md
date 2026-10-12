@@ -431,7 +431,8 @@ Every session saved to `logs/session_YYYYMMDD_HHMMSS.jsonl`:
 - [x] Emergency verbal bypass (critical alerts override mic input)
 - [x] Contextual goal arrival notifications & LLM guidance
 - [x] Step-based spatial tracking for noise elimination
-- [ ] GPU acceleration (CUDA)
+- [ ] 3D Objectization and segmentation
+
 
 ## Author
 
