@@ -15,13 +15,13 @@ from tests.synthetic import render_scene, scale_depth
 @pytest.mark.parametrize("k", [0.5, 0.8, 1.3, 2.0])
 def test_t5_scale_recovery(k: float):
     """T5: Multiply true depth by k in {0.5, 0.8, 1.3, 2.0}; recovered wall distance within 2% of 4m."""
-    K = Intrinsics.from_fov(width=640, height=480, hfov_deg=75.0)
+    K = Intrinsics.from_fov(width=320, height=240, hfov_deg=75.0)
     h_true = 1.4
     pitch_true = 15.0
     wall_dist_true = 4.0
 
     depth_true, floor_mask, wall_mask, _, _ = render_scene(
-        K, H=480, W=640, h=h_true, pitch_deg=pitch_true, wall_distance=wall_dist_true
+        K, H=240, W=320, h=h_true, pitch_deg=pitch_true, wall_distance=wall_dist_true
     )
 
     uncalibrated_depth = scale_depth(depth_true, k)
@@ -64,12 +64,12 @@ def test_t5_scale_recovery(k: float):
 
 def test_t6_failure_handling():
     """T6: Tiny floor mask returns TOO_FEW_POINTS; wall mask returns LOW_INLIER_RATIO or IMPLAUSIBLE_GEOMETRY."""
-    K = Intrinsics.from_fov(width=640, height=480, hfov_deg=75.0)
+    K = Intrinsics.from_fov(width=320, height=240, hfov_deg=75.0)
     h_true = 1.4
     pitch_true = 15.0
 
     depth, floor_mask, wall_mask, _, _ = render_scene(
-        K, H=480, W=640, h=h_true, pitch_deg=pitch_true, wall_distance=3.0
+        K, H=240, W=320, h=h_true, pitch_deg=pitch_true, wall_distance=3.0
     )
 
     mount = MountConfig(h_known=h_true, pitch_deg=pitch_true)
@@ -79,7 +79,7 @@ def test_t6_failure_handling():
 
     # 1. Tiny floor mask (< 500 points)
     tiny_mask = np.zeros_like(floor_mask)
-    tiny_mask[240:250, 320:330] = True  # 100 pixels
+    tiny_mask[120:130, 160:170] = True  # 100 pixels
     assert np.sum(tiny_mask) < 500
 
     res_tiny = lift_frame(
@@ -124,13 +124,13 @@ def test_d12_integration_scale_corrected_depth_metrics():
     """
     from evaluation.metrics_depth import compute_depth_metrics
 
-    K = Intrinsics.from_fov(width=640, height=480, hfov_deg=75.0)
+    K = Intrinsics.from_fov(width=320, height=240, hfov_deg=75.0)
     h_true = 1.4
     pitch_true = 15.0
     wall_dist_true = 4.0
 
     depth_true, floor_mask, wall_mask, _, _ = render_scene(
-        K, H=480, W=640, h=h_true, pitch_deg=pitch_true, wall_distance=wall_dist_true
+        K, H=240, W=320, h=h_true, pitch_deg=pitch_true, wall_distance=wall_dist_true
     )
 
     # Ground truth depth for evaluation (valid pixels only)

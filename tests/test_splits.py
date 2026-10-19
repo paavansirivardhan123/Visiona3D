@@ -50,6 +50,7 @@ def test_d4_stratification_keeps_tags_in_test():
             n_routes=20,
             frames_per_route=5,
             seed=42,
+            image_size=(320, 240),
         )
 
         routes = summary["routes"]
@@ -96,6 +97,7 @@ def test_d4_assert_no_leakage():
             n_routes=5,
             frames_per_route=3,
             seed=42,
+            image_size=(320, 240),
         )
         routes = summary["routes"]
 

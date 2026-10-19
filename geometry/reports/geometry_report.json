@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-13T03:15:08.345180",
+  "timestamp": "2026-10-19T13:54:59.339655",
   "status": "PASSED",
   "software_versions": {
     "python": "3.11.14",
@@ -105,23 +105,23 @@
     {
       "id": "T9",
       "name": "notation.md doctest execution",
-      "measured": "attempted=24, failures=0",
+      "measured": "attempted=42, failures=0",
       "target": ">=3 attempted, 0 failures",
       "passed": true,
       "details": {
-        "attempted": 24,
+        "attempted": 42,
         "failures": 0
       }
     },
     {
       "id": "T10",
       "name": "determinism & reproducibility",
-      "measured": "bit_identical=True, runtime=0.83 s",
+      "measured": "bit_identical=True, runtime=1.24 s",
       "target": "bit-identical & < 60 s",
       "passed": true,
       "details": {
         "bit_identical": true,
-        "runtime_seconds": 0.8347668000496924
+        "runtime_seconds": 1.2378096000757068
       }
     }
   ]

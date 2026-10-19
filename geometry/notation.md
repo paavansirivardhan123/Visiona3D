@@ -87,6 +87,7 @@ At the principal point `(cx, cy)`, the ray is `(0, 0, 1)`, so `|r| = 1` and `r_z
 5.0
 >>> float(depth_to_range(5.0, 320.0, 240.0, K))
 5.0
+
 ```
 
 **Worked Example 5: Range-to-Depth Off-Axis**
@@ -102,6 +103,7 @@ True
 >>> r = depth_to_range(d, 420.0, 240.0, K)
 >>> bool(np.isclose(r, 5.0))
 True
+
 ```
 
 **Worked Example 6: Array Round-Trip**
@@ -114,6 +116,7 @@ True
 >>> ranges_back = depth_to_range(depths, us, vs, K)
 >>> bool(np.allclose(ranges, ranges_back, rtol=1e-9))
 True
+
 ```
 
 ### Mask Class Indices (Defined in `core.config`)

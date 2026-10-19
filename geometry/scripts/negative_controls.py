@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from typing import Any
 
 # Ensure repository root is on sys.path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -33,6 +34,8 @@ if str(REPO_ROOT) not in sys.path:
 
 import numpy as np
 import pytest
+
+from core.config import RANGE_BIN_EDGES
 
 import geometry.camera as camera_mod
 import geometry.frames as frames_mod
@@ -53,6 +56,42 @@ from tests import (
     test_metrics_seg,
     test_bootstrap,
 )
+
+
+class NoOpMutationError(RuntimeError):
+    """Raised when an injected mutation produces output identical to the original."""
+
+
+def _values_identical(a: Any, b: Any) -> bool:
+    """Deep equality where matching NaN positions are treated as identical."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        if a.keys() != b.keys():
+            return False
+        return all(_values_identical(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        if len(a) != len(b):
+            return False
+        return all(_values_identical(x, y) for x, y in zip(a, b))
+    try:
+        aa = np.asarray(a)
+        bb = np.asarray(b)
+        if aa.shape != bb.shape:
+            return False
+        return bool(np.array_equal(aa, bb, equal_nan=True))
+    except Exception:
+        return a == b
+
+
+def assert_mutation_effective(name: str, orig_fn, mutated_fn, *args, **kwargs) -> None:
+    """Verify on a probe that the mutated function differs from the original.
+
+    Raises NoOpMutationError (distinct message and exit code) when the mutation
+    is a no-op, i.e. it cannot be caught by any test because it changes nothing.
+    """
+    orig_out = orig_fn(*args, **kwargs)
+    mutated_out = mutated_fn(*args, **kwargs)
+    if _values_identical(orig_out, mutated_out):
+        raise NoOpMutationError(f"NO-OP MUTATION: {name}")
 
 
 def run_test_and_catch(test_fn, *args, **kwargs) -> bool:
@@ -280,59 +319,149 @@ def test_bug_g() -> list[str]:
 
 
 def test_bug_h() -> list[str]:
-    """Bug (h): AbsRel uses Euclidean range instead of z-depth."""
-    orig_compute = test_metrics_depth.compute_depth_metrics
+    """Bug (h): AbsRel compares a Euclidean range (pred) against z-depth (GT).
+
+    A constant conversion factor applied to both sides would cancel out, so the
+    injected bug applies the range conversion to the prediction only, simulating
+    mismatched units (pred as Euclidean range r = z * sqrt(1 + dx^2 + dy^2) at a
+    representative off-axis pixel dx = dy = 0.5, GT as z-depth).
+    """
+    orig_fn = test_metrics_depth.compute_depth_metrics
+    off_axis = float(np.sqrt(1.0 + 0.25 + 0.25))  # ~1.2247
 
     def buggy_compute_depth_metrics(gt_depth, pred_depth, valid_mask=None, tags=None):
-        # Buggy: compute relative error using Euclidean range instead of z-depth
-        # This simulates using range instead of depth in the metric
-        result = orig_compute(gt_depth, pred_depth, valid_mask, tags)
-        # The bug would manifest as different values, but we need a test that catches it
-        # We'll use the existing test that checks AbsRel = 0.1 for 1.1x GT
+        result = orig_fn(gt_depth, pred_depth, valid_mask, tags)
+        gt = np.asarray(gt_depth, dtype=np.float64).ravel()
+        pred = np.asarray(pred_depth, dtype=np.float64).ravel()
+        if valid_mask is not None:
+            valid = np.asarray(valid_mask, dtype=bool).ravel()
+        else:
+            valid = np.isfinite(gt) & (gt > 0) & np.isfinite(pred) & (pred > 0)
+        gt, pred = gt[valid], pred[valid]
+        if len(gt) == 0:
+            return result
+        result["AbsRel"] = float(np.mean(np.abs(gt - pred * off_axis) / gt))
         return result
+
+    probe_gt = np.array([1.0, 2.0, 4.0])
+    probe_pred = probe_gt * 1.1
+    assert_mutation_effective(
+        "(h) AbsRel range vs z-depth", orig_fn, buggy_compute_depth_metrics, probe_gt, probe_pred
+    )
 
     caught_by = []
     try:
         test_metrics_depth.compute_depth_metrics = buggy_compute_depth_metrics
-        # The test_d6_absrel_exact test uses GT [1,2,4,8] and pred 1.1x GT
-        # If buggy, it would compute different AbsRel
         if run_test_and_catch(test_metrics_depth.test_d6_absrel_exact):
             caught_by.append("D6 (AbsRel exact)")
     finally:
-        test_metrics_depth.compute_depth_metrics = orig_compute
+        test_metrics_depth.compute_depth_metrics = orig_fn
     return caught_by
 
 
 def test_bug_i() -> list[str]:
-    """Bug (i): coverage uses strict instead of inclusive bounds."""
-    orig_compute = test_metrics_interval.compute_interval_metrics
+    """Bug (i): coverage uses strict bounds (gt > lo and gt < hi)."""
+    orig_fn = test_metrics_interval.compute_interval_metrics
 
-    def buggy_compute_interval_metrics(gt, pred_lo, pred_hi, nominal_coverage=0.95, valid_mask=None, depths=None, tags=None):
-        # Buggy: use strict bounds (gt > lo and gt < hi) instead of inclusive
-        result = orig_compute(gt, pred_lo, pred_hi, nominal_coverage, valid_mask, depths, tags)
-        # The test_d7_coverage_width_score has samples exactly at bounds
-        # With strict bounds, coverage would be lower
+    def buggy_compute_interval_metrics(
+        gt, pred_lo, pred_hi, nominal_coverage=0.95, valid_mask=None, depths=None, tags=None
+    ):
+        result = orig_fn(gt, pred_lo, pred_hi, nominal_coverage, valid_mask, depths, tags)
+        gt_arr = np.asarray(gt, dtype=np.float64).ravel()
+        lo = np.asarray(pred_lo, dtype=np.float64).ravel()
+        hi = np.asarray(pred_hi, dtype=np.float64).ravel()
+        if valid_mask is not None:
+            valid = np.asarray(valid_mask, dtype=bool).ravel()
+        else:
+            valid = (
+                np.isfinite(gt_arr) & np.isfinite(lo) & np.isfinite(hi)
+                & (gt_arr > 0) & (lo > 0) & (hi > 0)
+            )
+        gt_arr, lo, hi = gt_arr[valid], lo[valid], hi[valid]
+        if len(gt_arr) == 0:
+            return result
+        coverage = float(np.mean((gt_arr > lo) & (gt_arr < hi)))  # BUG: strict bounds
+        result["coverage"] = coverage
+        result["coverage_gap"] = coverage - nominal_coverage
         return result
+
+    probe_gt = np.array([1.0, 2.0, 3.0])
+    probe_lo = np.array([1.0, 1.5, 4.0])
+    probe_hi = np.array([1.5, 2.0, 4.0])
+    assert_mutation_effective(
+        "(i) coverage strict bounds",
+        orig_fn,
+        buggy_compute_interval_metrics,
+        probe_gt,
+        probe_lo,
+        probe_hi,
+    )
 
     caught_by = []
     try:
         test_metrics_interval.compute_interval_metrics = buggy_compute_interval_metrics
         if run_test_and_catch(test_metrics_interval.test_d7_coverage_width_score):
             caught_by.append("D7 (coverage width score)")
+        if run_test_and_catch(test_metrics_interval.test_d7_inclusive_bounds):
+            caught_by.append("D7 (inclusive bounds)")
     finally:
-        test_metrics_interval.compute_interval_metrics = orig_compute
+        test_metrics_interval.compute_interval_metrics = orig_fn
     return caught_by
 
 
 def test_bug_j() -> list[str]:
-    """Bug (j): range-bin edges off by one (right-inclusive)."""
-    # This bug would put exact edges (2.0, 4.0, 6.0) in the left bin instead of right
-    # The test_d6_per_bin_edges test explicitly checks this
-    orig_compute = test_metrics_depth.compute_depth_metrics
+    """Bug (j): range-bin edges off by one (right-inclusive bins).
+
+    Exact edges (2.0, 4.0, 6.0) are assigned to the LOWER bin: (0,2], (2,4],
+    (4,6], (6,inf) instead of the spec's [0,2), [2,4), [4,6), [6,inf).
+    """
+    orig_fn = test_metrics_depth.compute_depth_metrics
+
+    def _bin_metrics(gt, pred):
+        rel = np.abs(gt - pred) / gt
+        return {
+            "AbsRel": float(np.mean(rel)),
+            "RMSE": float(np.sqrt(np.mean((gt - pred) ** 2))),
+            "MAE": float(np.mean(np.abs(gt - pred))),
+            "Bias": float(np.mean(pred - gt)),
+            "Delta125": float(np.mean(np.maximum(gt / pred, pred / gt) < 1.25)),
+            "count": int(len(gt)),
+        }
 
     def buggy_compute_depth_metrics(gt_depth, pred_depth, valid_mask=None, tags=None):
-        result = orig_compute(gt_depth, pred_depth, valid_mask, tags)
+        result = orig_fn(gt_depth, pred_depth, valid_mask, tags)
+        gt = np.asarray(gt_depth, dtype=np.float64).ravel()
+        pred = np.asarray(pred_depth, dtype=np.float64).ravel()
+        if valid_mask is not None:
+            valid = np.asarray(valid_mask, dtype=bool).ravel()
+        else:
+            valid = np.isfinite(gt) & (gt > 0) & np.isfinite(pred) & (pred > 0)
+        gt, pred = gt[valid], pred[valid]
+        per_bin = {}
+        for i, name in enumerate(["0-2m", "2-4m", "4-6m", "6+m"]):
+            if i < 3:
+                mask = (gt > RANGE_BIN_EDGES[i]) & (gt <= RANGE_BIN_EDGES[i + 1])  # BUG
+            else:
+                mask = gt > RANGE_BIN_EDGES[3]  # BUG: drops the exact edge 6.0
+            g, p = gt[mask], pred[mask]
+            if len(g) > 0:
+                per_bin[name] = _bin_metrics(g, p)
+            else:
+                per_bin[name] = {
+                    "AbsRel": float("nan"),
+                    "RMSE": float("nan"),
+                    "MAE": float("nan"),
+                    "Bias": float("nan"),
+                    "Delta125": float("nan"),
+                    "count": 0,
+                }
+        result["per_bin"] = per_bin
         return result
+
+    probe = np.array([1.9, 2.0, 3.9, 4.0, 5.9, 6.0, 7.0])
+    assert_mutation_effective(
+        "(j) range-bin edges right-inclusive", orig_fn, buggy_compute_depth_metrics, probe, probe.copy()
+    )
 
     caught_by = []
     try:
@@ -340,7 +469,7 @@ def test_bug_j() -> list[str]:
         if run_test_and_catch(test_metrics_depth.test_d6_per_bin_edges):
             caught_by.append("D6 (per bin edges)")
     finally:
-        test_metrics_depth.compute_depth_metrics = orig_compute
+        test_metrics_depth.compute_depth_metrics = orig_fn
     return caught_by
 
 
@@ -387,6 +516,8 @@ def test_bug_k() -> list[str]:
         test_bootstrap.bootstrap_routes = buggy_bootstrap
         if run_test_and_catch(test_bootstrap.test_d9_ci_contains_true_mean):
             caught_by.append("D9 (CI contains true mean)")
+        if run_test_and_catch(test_bootstrap.test_d9_route_vs_frame_resampling_ci_width):
+            caught_by.append("D9 (route vs frame CI width)")
     finally:
         test_bootstrap.bootstrap_routes = orig_bootstrap
     return caught_by
@@ -476,6 +607,10 @@ def test_bug_m() -> list[str]:
         test_metrics_seg.compute_segmentation_metrics = buggy_compute_segmentation_metrics
         if run_test_and_catch(test_metrics_seg.test_d5_false_walkable_rate):
             caught_by.append("D5 (false walkable rate)")
+        if run_test_and_catch(test_metrics_seg.test_d5_fw_rate_unchanged_by_added_ignore_pixels):
+            caught_by.append("D5 (FW unchanged by added 0/255)")
+        if run_test_and_catch(test_metrics_seg.test_d5_fw_rate_denominator_excludes_ignore_would_change):
+            caught_by.append("D5 (FW denominator excludes 0/255)")
     finally:
         test_metrics_seg.compute_segmentation_metrics = orig_compute
     return caught_by
@@ -534,7 +669,13 @@ def main() -> int:
     print("-" * 90)
 
     for desc, runner in controls:
-        caught_tests = runner()
+        try:
+            caught_tests = runner()
+        except NoOpMutationError as exc:
+            print(f"{desc:<55} | {str(exc):<25} | NO-OP ")
+            print("=" * 90)
+            print(str(exc))
+            return 3
         is_caught = len(caught_tests) > 0
         status_str = "YES" if is_caught else "NO"
         tests_str = ", ".join(caught_tests) if is_caught else "NONE"

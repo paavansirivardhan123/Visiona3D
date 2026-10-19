@@ -80,6 +80,51 @@ def test_d9_same_seed_identical_output():
     assert np.array_equal(r1["samples"], r2["samples"])
 
 
+def test_d9_route_vs_frame_resampling_ci_width():
+    """D9: Route-level resampling keeps clusters together and gives a wider CI.
+
+    Design: 10 routes x 10 frames. Every frame within a route has the same
+    value (1..10); route values differ. With equal frame counts per route, both
+    resamplers target the same mean, but the route-level CI must be about
+    sqrt(cluster_size) = sqrt(10) ~ 3.16 times wider (design effect). Measured
+    with seed 123: route width 3.500, frame width 1.060, ratio 3.30. A
+    frame-level implementation of bootstrap_routes would give a ratio ~1.0.
+    """
+    route_metrics = {f"route_{i}": np.full(10, float(i + 1)) for i in range(10)}
+    received = []
+
+    def mean_fn(values):
+        arr = np.asarray(values)
+        received.append(arr)
+        return float(np.mean(arr))
+
+    result = bootstrap_routes(route_metrics, mean_fn, n_bootstrap=400, seed=123)
+    route_width = result["ci_upper"] - result["ci_lower"]
+
+    # Instrumentation: each draw must receive whole routes, never scattered frames.
+    assert len(received) == 400
+    for arr in received:
+        assert arr.size == 100
+        for block_start in range(0, 100, 10):
+            block = arr[block_start:block_start + 10]
+            assert np.all(block == block[0]), "route frames were not resampled together"
+
+    # Frame-level pooled bootstrap on identical data, same seed and draws.
+    all_frames = np.concatenate(list(route_metrics.values()))
+    rng = np.random.default_rng(123)
+    frame_samples = np.array([
+        float(np.mean(rng.choice(all_frames, size=all_frames.size, replace=True)))
+        for _ in range(400)
+    ])
+    frame_width = float(
+        np.percentile(frame_samples, 97.5) - np.percentile(frame_samples, 2.5)
+    )
+
+    # Threshold from the example: design effect sqrt(10) ~ 3.16 (measured 3.30).
+    # A frame-level resampler yields ~1.0, so 2.5 cleanly separates the two.
+    assert route_width > 2.5 * frame_width
+
+
 def test_d9_multi_metric():
     """D9: Multi-metric bootstrap works."""
     route_metrics = {

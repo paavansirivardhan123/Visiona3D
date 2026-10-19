@@ -16,8 +16,8 @@ from tests.synthetic import add_noise, render_scene
 @pytest.mark.parametrize("pitch_deg", [0.0, 10.0, 20.0])
 def test_t3_clean_plane_recovery(h: float, pitch_deg: float):
     """T3: h within 1% and normal angle error < 0.5 deg for h in {1.2, 1.6} and pitch in {0, 10, 20}."""
-    K = Intrinsics.from_fov(width=640, height=480, hfov_deg=75.0)
-    depth, floor_mask, _, _, gt = render_scene(K, H=480, W=640, h=h, pitch_deg=pitch_deg)
+    K = Intrinsics.from_fov(width=320, height=240, hfov_deg=75.0)
+    depth, floor_mask, _, _, gt = render_scene(K, H=240, W=320, h=h, pitch_deg=pitch_deg)
 
     points_c = backproject(depth, K)
     floor_pts = points_c[floor_mask]
@@ -41,12 +41,12 @@ def test_t3_clean_plane_recovery(h: float, pitch_deg: float):
 
 def test_t4_noisy_recovery():
     """T4: 2% relative noise + 10% outliers gives h within 3% over 20 seeds."""
-    K = Intrinsics.from_fov(width=640, height=480, hfov_deg=75.0)
+    K = Intrinsics.from_fov(width=320, height=240, hfov_deg=75.0)
     h_true = 1.4
     pitch_true = 15.0
 
     clean_depth, floor_mask, _, _, _ = render_scene(
-        K, H=480, W=640, h=h_true, pitch_deg=pitch_true
+        K, H=240, W=320, h=h_true, pitch_deg=pitch_true
     )
 
     errors = []

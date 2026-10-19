@@ -67,6 +67,22 @@ def test_d7_coverage_gap_sign():
     assert m2["coverage_gap"] < 0  # 0.0 - 0.95 = -0.95
 
 
+def test_d7_inclusive_bounds():
+    """D7: GT exactly on lo or hi counts as covered (inclusive bounds)."""
+    gt = np.array([1.0, 2.0, 4.0])
+    # sample 0: gt == lo, sample 1: gt == hi, sample 2: gt == lo == hi
+    lo = np.array([1.0, 1.5, 4.0])
+    hi = np.array([1.5, 2.0, 4.0])
+
+    metrics = compute_interval_metrics(gt, lo, hi, nominal_coverage=0.95)
+
+    # All three GTs lie exactly on an interval bound and must be covered.
+    assert metrics["coverage"] == 1.0
+    assert metrics["coverage_gap"] == pytest.approx(1.0 - 0.95)
+    # Strict bounds would report coverage = 0.0.
+    assert metrics["coverage"] != pytest.approx(0.0)
+
+
 def test_d7_per_bin_and_per_tag():
     """D7: Per-bin and per-tag splits correct."""
     gt = np.array([1.0, 3.0, 5.0, 7.0])

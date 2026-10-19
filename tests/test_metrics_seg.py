@@ -63,8 +63,9 @@ def test_d5_partial_overlap():
     assert metrics["per_class_iou"]["wall"] == pytest.approx(2/4)
     # Obstacle: GT has 4, Pred has 4 (cols 1-2), Intersection = 2, Union = 6
     assert metrics["per_class_iou"]["obstacle"] == pytest.approx(2/6)
-    # Other: GT has 4, Pred has 4 (cols 1-2), Intersection = 2, Union = 6
-    assert metrics["per_class_iou"]["other"] == pytest.approx(2/6)
+    # Other: GT has 4 (cols 2-3), Pred has 2 (col 3 only, col 2 shifted to obstacle),
+    # Intersection = 2, Union = 4
+    assert metrics["per_class_iou"]["other"] == pytest.approx(2/4)
 
 
 def test_d5_unlabeled_ignore_never_count():
@@ -157,6 +158,54 @@ def test_d5_false_walkable_rate_range_restricted():
     # Bin 4-6m: bottom half only (floor in GT, pred floor)
     # Pred floor in bin = 8 pixels, false walkable = 0
     assert metrics["false_walkable_rate_by_bin"]["4-6m"] == pytest.approx(0.0)
+
+
+def test_d5_fw_rate_unchanged_by_added_ignore_pixels():
+    """D5: Adding GT 0/255 pixels where floor is predicted does not change the FW rate."""
+    gt_base = np.array([
+        [2, 2, 2, 2],  # wall
+        [2, 2, 2, 2],
+        [1, 1, 1, 1],  # floor
+        [1, 1, 1, 1],
+    ], dtype=np.uint8)
+    pred_base = np.full((4, 4), 1, dtype=np.uint8)
+
+    # Same scene plus two extra columns: GT unlabeled (0) and ignore (255),
+    # with predicted floor on both.
+    gt_extra = np.hstack([
+        gt_base,
+        np.full((4, 1), 0, dtype=np.uint8),
+        np.full((4, 1), 255, dtype=np.uint8),
+    ])
+    pred_extra = np.full((4, 6), 1, dtype=np.uint8)
+
+    base_rate = compute_segmentation_metrics(pred_base, gt_base)["false_walkable_rate"]
+    extra_rate = compute_segmentation_metrics(pred_extra, gt_extra)["false_walkable_rate"]
+
+    # 0/255 GT pixels are excluded from valid_gt, so they leave both numerator
+    # and denominator untouched: 8 false-walkable / 16 predicted-floor = 0.5.
+    # If they were counted in the denominator the rate would be 8/24 = 0.333.
+    assert base_rate == pytest.approx(0.5)
+    assert extra_rate == pytest.approx(0.5)
+
+
+def test_d5_fw_rate_denominator_excludes_ignore_would_change():
+    """D5: Counting GT 0/255 in the FW denominator would change the result."""
+    gt = np.array([
+        [2, 2, 2],
+        [0, 255, 0],
+        [1, 1, 1],
+    ], dtype=np.uint8)
+    pred = np.full((3, 3), 1, dtype=np.uint8)
+
+    rate = compute_segmentation_metrics(pred, gt)["false_walkable_rate"]
+
+    # Valid GT = 3 wall + 3 floor. Predicted floor on valid GT = 6, of which
+    # 3 are wall -> FW rate = 3/6 = 0.5.
+    assert rate == pytest.approx(0.5)
+    # Had the 0/255 pixels been counted in the denominator, the rate would be
+    # 3/9 = 0.333; assert the implementation does NOT do that.
+    assert rate != pytest.approx(3 / 9)
 
 
 def test_d5_per_frame_aggregation():
