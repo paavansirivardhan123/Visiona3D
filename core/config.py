@@ -1,3 +1,8 @@
+from dataclasses import dataclass
+import math
+import numpy as np
+
+
 class Config:
     """Centralized configuration."""
 
@@ -32,7 +37,6 @@ class Config:
     load_dotenv()
     
     GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "")
-    MAPS_API_KEY  = os.getenv("MAPS_API_KEY", "")
 
     GROUP_THRESHOLD = 5
 
@@ -96,3 +100,170 @@ class Config:
     TTC_WARN_THRESHOLD = 3.0
 
     FRAME_BUDGET_MS = 2000
+
+
+# ---------------------------------------------------------------------------
+# Geometry module configuration dataclasses
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Intrinsics:
+    """Camera intrinsic parameters for pinhole camera model.
+
+    Attributes:
+        fx: Focal length along x axis in pixels.
+        fy: Focal length along y axis in pixels.
+        cx: Principal point x coordinate in pixels.
+        cy: Principal point y coordinate in pixels.
+        width: Image width in pixels. Default: 1280.
+        height: Image height in pixels. Default: 720.
+    """
+
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+    width: int = 1280
+    height: int = 720
+
+    @classmethod
+    def from_fov(cls, width: int, height: int, hfov_deg: float) -> "Intrinsics":
+        """Construct Intrinsics from image dimensions and horizontal FOV."""
+        hfov_rad = math.radians(hfov_deg)
+        fx = (width / 2.0) / math.tan(hfov_rad / 2.0)
+        return cls(fx=fx, fy=fx, cx=width / 2.0, cy=height / 2.0, width=width, height=height)
+
+    def as_matrix(self) -> np.ndarray:
+        """Return 3x3 intrinsic matrix K."""
+        return np.array(
+            [[self.fx, 0.0, self.cx], [0.0, self.fy, self.cy], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+
+
+@dataclass(frozen=True)
+class MountConfig:
+    """Camera mounting configuration relative to ground.
+
+    Attributes:
+        h_known: True mounted camera height above ground in metres. Default: 1.4 m.
+        pitch_deg: Nominal camera pitch angle in degrees (positive = tilted down). Default: 15.0 deg.
+    """
+
+    h_known: float = 1.4
+    pitch_deg: float = 15.0
+
+
+@dataclass(frozen=True)
+class RansacConfig:
+    """RANSAC plane fitting hyperparameters.
+
+    Attributes:
+        max_iterations: Number of 3-point sample iterations. Default: 500.
+        tau0: Base inlier distance threshold in metres. Default: 0.02 m.
+        tau1: Depth-dependent inlier distance multiplier. Default: 0.01.
+        max_points: Maximum points subsampled for RANSAC candidate evaluation. Default: 5000.
+        min_points: Minimum points required to attempt plane fit. Default: 500.
+        min_inlier_ratio: Minimum fraction of inliers required for valid fit. Default: 0.5.
+        max_pitch_deg: Maximum plausible pitch angle in degrees. Default: 60.0 deg.
+    """
+
+    max_iterations: int = 500
+    tau0: float = 0.02
+    tau1: float = 0.01
+    max_points: int = 5000
+    min_points: int = 500
+    min_inlier_ratio: float = 0.5
+    max_pitch_deg: float = 60.0
+
+
+@dataclass(frozen=True)
+class ScaleConfig:
+    """Scale estimator filtering hyperparameters.
+
+    Attributes:
+        alpha: Exponential moving average smoothing factor. Default: 0.2.
+        max_step_change: Maximum allowed relative change in a single frame. Default: 0.15.
+        outlier_threshold: Relative deviation threshold to flag an outlier. Default: 0.25.
+        outlier_patience: Consecutive outlier frames to accept a persistent shift. Default: 5.
+        initial_scale: Initial scale correction value. Default: 1.0.
+    """
+
+    alpha: float = 0.2
+    max_step_change: float = 0.15
+    outlier_threshold: float = 0.25
+    outlier_patience: int = 5
+    initial_scale: float = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Dataset and Evaluation Conventions (Research Section)
+# ---------------------------------------------------------------------------
+#
+# These constants define the ground-truth conventions, mask taxonomy, range bins,
+# and tag vocabularies used by the dataset, annotation, and evaluation harness.
+# They are defined here alongside Intrinsics and MountConfig to avoid config drift.
+#
+
+
+# Mask class indices (define once, reference everywhere)
+MASK_UNLABELED = 0      # Ignored everywhere
+MASK_FLOOR = 1          # Floor / ground plane
+MASK_WALL = 2           # Vertical wall
+MASK_OBSTACLE = 3       # Obstacle (object above ground)
+MASK_OTHER = 4          # Other (ceiling, vegetation, etc.)
+MASK_IGNORE = 255       # Ignore region (glass, mirror, ambiguous)
+
+MASK_CLASS_NAMES = {
+    MASK_UNLABELED: "unlabeled",
+    MASK_FLOOR: "floor",
+    MASK_WALL: "wall",
+    MASK_OBSTACLE: "obstacle",
+    MASK_OTHER: "other",
+    MASK_IGNORE: "ignore",
+}
+
+MASK_EVAL_CLASSES = [MASK_FLOOR, MASK_WALL, MASK_OBSTACLE, MASK_OTHER]
+
+
+# Range bins for every per-range metric (left-inclusive, right-exclusive)
+# Bins: [0, 2), [2, 4), [4, 6), [6, inf) metres
+RANGE_BIN_EDGES = [0.0, 2.0, 4.0, 6.0, float("inf")]
+RANGE_BIN_NAMES = ["0-2m", "2-4m", "4-6m", "6+m"]
+
+
+# Tag vocabularies (define once)
+ENV_TAGS = ["indoor", "outdoor"]
+LIGHT_TAGS = ["day", "dusk", "dark"]
+HAZARD_TAGS = ["glass", "mirror", "wet", "none"]
+CROWD_TAGS = ["none", "low", "high"]
+
+ALL_TAG_VOCABS = {
+    "env": ENV_TAGS,
+    "light": LIGHT_TAGS,
+    "hazard": HAZARD_TAGS,
+    "crowd": CROWD_TAGS,
+}
+
+
+def range_bin_index(depth_m: float) -> int:
+    """Return the range bin index for a given depth in metres.
+
+    Bins: [0,2), [2,4), [4,6), [6,inf) — left-inclusive, right-exclusive.
+    Returns -1 for invalid (NaN, negative) depths.
+    """
+    if not np.isfinite(depth_m) or depth_m < 0.0:
+        return -1
+    for i, edge in enumerate(RANGE_BIN_EDGES[:-1]):
+        if depth_m < RANGE_BIN_EDGES[i + 1]:
+            return i
+    return len(RANGE_BIN_EDGES) - 2  # Last bin for >= 6m
+
+
+def validate_tag(tag_name: str, tag_value: str) -> bool:
+    """Validate a tag value against the defined vocabulary."""
+    vocab = ALL_TAG_VOCABS.get(tag_name)
+    if vocab is None:
+        return False
+    return tag_value in vocab

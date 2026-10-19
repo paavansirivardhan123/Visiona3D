@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from agents.tools.vision_tools import (
     query_past_detections, summarize_scene, set_search_intent, 
-    calculate_route, save_object_signature, get_objects_near,
+    save_object_signature, get_objects_near,
     register_search_intent_callback, set_persistent_goal,
     mark_goal_completed, lower_goal_candidate_priority
 )
@@ -39,7 +39,6 @@ class AgentEngine:
                 query_past_detections,
                 summarize_scene,
                 set_search_intent,
-                calculate_route,
                 save_object_signature,
                 get_objects_near,
                 set_persistent_goal,
@@ -127,10 +126,9 @@ class AgentEngine:
             f"USER SAID: '{question}'\n\n"
             "INSTRUCTIONS:\n"
             "1. DYNAMIC INTENT: If the user needs anything (rest, water, coffee, exit), use 'set_persistent_goal'.\n"
-            "2. SHORTEST PATH NAVIGATION: If the user asks for directions or to find a place, use 'calculate_route'. The system will automatically find the SHORTEST walking path using their live location.\n"
-            "3. BE PROACTIVE & VERBAL: When you provide directions, speak them EXACTLY as they are given to you. If you see a busy road (many vehicles), warn the user immediately.\n"
-            "4. TOOL USAGE: Use tools for everything. If a goal is active and you see a candidate, guide the user to it.\n"
-            "5. NATURAL TONE: Speak like a helpful friend. Provide a single, comforting, and EXTREMELY PRECISE sentence as your final response."
+            "2. BE PROACTIVE & VERBAL: If you see a busy road (many vehicles), warn the user immediately.\n"
+            "3. TOOL USAGE: Use tools for everything. If a goal is active and you see a candidate, guide the user to it.\n"
+            "4. NATURAL TONE: Speak like a helpful friend. Provide a single, comforting, and EXTREMELY PRECISE sentence as your final response."
         )
 
         messages = [

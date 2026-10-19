@@ -9,8 +9,8 @@ env/
 .env
 
 # Models
-# *.pt  # Commented out since yolov8n.pt and yolov8s.pt are committed
-# *.pth
+*.pt
+*.pth
 
 # IDEs
 .vscode/

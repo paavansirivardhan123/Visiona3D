@@ -1,0 +1,47 @@
+{
+  "route_id": "route_001",
+  "tags": {
+    "env": "indoor",
+    "light": "day",
+    "hazard": "none",
+    "crowd": "low"
+  },
+  "mount": {
+    "height_m": 1.4,
+    "pitch_deg": 15.0,
+    "roll_deg": 0.0,
+    "yaw_deg": 0.0
+  },
+  "frames": [
+    {
+      "frame_id": "route_001_frame_00000",
+      "route_id": "route_001",
+      "frame_index": 0,
+      "timestamp_ns": 0,
+      "rgb_path": "route_001/frame_00000.jpg",
+      "depth_path": "route_001/frame_00000_depth.npz",
+      "mask_path": "route_001/frame_00000_mask.npz",
+      "intrinsics": {
+        "fx": 500.0,
+        "fy": 500.0,
+        "cx": 320.0,
+        "cy": 240.0,
+        "width": 640,
+        "height": 480
+      },
+      "mount": {
+        "height_m": 1.4,
+        "pitch_deg": 15.0,
+        "roll_deg": 0.0,
+        "yaw_deg": 0.0
+      },
+      "tags": {
+        "env": "indoor",
+        "light": "day",
+        "hazard": "none",
+        "crowd": "low"
+      },
+      "distance_points": []
+    }
+  ]
+}

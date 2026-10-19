@@ -24,7 +24,6 @@ def lower_goal_candidate_priority(candidate: str) -> str:
     """Lowers priority of a specific candidate (e.g., user said 'no' to a grocery store)."""
     goal_system.lower_priority(candidate)
     return f"I will stop suggesting '{candidate}' as frequently for current goals."
-from services.google_maps import get_directions
 from services.vector_db import search_remembered_object
 import cv2
 from typing import Any
@@ -48,7 +47,7 @@ def summarize_scene(scene_description: str) -> str:
 
 @tool
 def set_search_intent(object_types: list[str] | str) -> str:
-    """Sets YOLO to seek specific semantic target objects like ['chair', 'sofa', 'bench']."""
+    """Sets YOLO to seek specific semantic target objects like ['chair', 'sofa', 'bench'].""" 
     resolved_list = [object_types] if isinstance(object_types, str) else object_types
     resolved_target = resolved_list[0] if resolved_list else None
     
@@ -59,11 +58,6 @@ def set_search_intent(object_types: list[str] | str) -> str:
         print(f"  [Tool] Search intent callback unavailable or no target")
 
     return f"Search intent successfully set for: {', '.join(resolved_list)}."
-
-@tool
-def calculate_route(destination: str) -> str:
-    """Use Google Maps API to get step-by-step walking directions to a destination."""
-    return get_directions(destination)
 
 @tool
 def save_object_signature(label: str, alias: str, current_spatial_context: str) -> str:

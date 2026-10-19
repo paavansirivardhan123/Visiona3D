@@ -108,10 +108,10 @@ No stereo cameras. No LiDAR. No custom sensors. Just a standard RGB camera and a
 ## Project Structure
 
 ```
-VISIONA/
+Visiona3D/
 ├── main.py                         Entry point — camera feeds, main loop, PTT
 ├── core/
-│   ├── config.py                   All settings — single source of truth
+│   ├── config.py                   All settings + geometry dataclasses (single source of truth)
 │   ├── detection.py                Detection dataclass with threat_score property
 │   ├── priority_queue.py           Max-heap priority queue
 │   ├── memory.py                   VisionMemory (15-min rolling) + GoalSystem
@@ -125,6 +125,13 @@ VISIONA/
 │   ├── speed.py                    Speed estimation + motion classification
 │   ├── ttc.py                      Time-To-Collision calculator (EMA smoothed)
 │   └── kalman.py                   1D Kalman filter for depth noise reduction
+├── geometry/
+│   ├── camera.py                   Pinhole projection and backprojection
+│   ├── frames.py                   Camera ↔ ground frame transformations
+│   ├── ground_plane.py             RANSAC + PCA ground plane fitting
+│   ├── scale.py                    Temporal scale estimation (EMA + outlier rejection)
+│   ├── lift.py                     Point-cloud lifting and 3D object anchors
+│   └── notation.md                 Coordinate system conventions and math reference
 ├── audio/
 │   ├── speech.py                   Priority TTS queue + ducking + emergency bypass
 │   ├── voice_input.py              Zero-latency PTT mic capture
@@ -135,6 +142,7 @@ VISIONA/
 │       └── vision_tools.py         9 LangChain tools (memory, search, goals)
 ├── services/
 │   └── vector_db.py                Object signature storage (placeholder)
+├── tests/                          Test suite for geometry module (22 tests)
 ├── sample-vid/                     Test video files
 ├── yolov8n.pt                      YOLO model weights
 ├── pyproject.toml                  Dependencies (managed with uv)

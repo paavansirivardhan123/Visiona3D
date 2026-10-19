@@ -1,0 +1,128 @@
+{
+  "timestamp": "2026-10-13T03:15:08.345180",
+  "status": "PASSED",
+  "software_versions": {
+    "python": "3.11.14",
+    "numpy": "1.26.4",
+    "pytest": "9.0.3",
+    "platform": "Windows-10-10.0.26200-SP0"
+  },
+  "tests": [
+    {
+      "id": "T1",
+      "name": "project/backproject roundtrip",
+      "measured": "pixel_err=1.14e-13 px, depth_err=0.00e+00 m",
+      "target": "< 1e-6",
+      "passed": true,
+      "details": {
+        "max_pixel_error": 1.1368683772161603e-13,
+        "max_depth_error": 0.0
+      }
+    },
+    {
+      "id": "T2",
+      "name": "ground frame recovery",
+      "measured": "floor_z_err=4.44e-16 m, wall_y_err=8.88e-16 m",
+      "target": "< 1e-6",
+      "passed": true,
+      "details": {
+        "max_floor_z_error": 4.440892098500626e-16,
+        "max_wall_y_error": 8.881784197001252e-16
+      }
+    },
+    {
+      "id": "T3",
+      "name": "clean plane recovery",
+      "measured": "h_err_max=0.000%, angle_err_max=0.000 deg",
+      "target": "h < 1%, angle < 0.5 deg",
+      "passed": true,
+      "details": {
+        "max_h_error_pct": 9.066821367772112e-12,
+        "max_angle_error_deg": 0.0
+      }
+    },
+    {
+      "id": "T4",
+      "name": "noisy recovery (20 seeds)",
+      "measured": "mean=0.161%, max=0.479%",
+      "target": "h < 3% over 20 seeds",
+      "passed": true,
+      "details": {
+        "mean_h_error_pct": 0.16121290389415185,
+        "max_h_error_pct": 0.479480927559482
+      }
+    },
+    {
+      "id": "T5",
+      "name": "scale recovery across k",
+      "measured": "max_wall_dist_err=0.113% (k in [0.5, 0.8, 1.3, 2.0])",
+      "target": "wall dist < 2%",
+      "passed": true,
+      "details": {
+        "max_wall_error_pct": 0.11333679558862553,
+        "per_k_errors_pct": {
+          "0.5": 2.4424906541753444e-13,
+          "0.8": 0.07555786372743789,
+          "1.3": 0.11333679558862553,
+          "2.0": 2.4424906541753444e-13
+        }
+      }
+    },
+    {
+      "id": "T6",
+      "name": "failure handling (no exceptions)",
+      "measured": "tiny=TOO_FEW_POINTS, wall=LOW_INLIER_RATIO",
+      "target": "TOO_FEW_POINTS & LOW_INLIER/IMPLAUSIBLE",
+      "passed": true,
+      "details": {
+        "tiny_status": "TOO_FEW_POINTS",
+        "wall_status": "LOW_INLIER_RATIO"
+      }
+    },
+    {
+      "id": "T7",
+      "name": "EMA & outlier temporal logic",
+      "measured": "outlier_ignored=True, frame5_accepted=True",
+      "target": "ignore single, accept at frame 5",
+      "passed": true,
+      "details": {
+        "single_outlier_ignored": true,
+        "frame5_accepted": true
+      }
+    },
+    {
+      "id": "T8",
+      "name": "3D object anchor localization",
+      "measured": "dist_err=0.344%, pos_err=1.72 cm",
+      "target": "dist < 2%, pos < 5 cm",
+      "passed": true,
+      "details": {
+        "distance_error_pct": 0.34357274263263343,
+        "position_error_cm": 1.7216559444700943,
+        "empty_status": "EMPTY_MASK"
+      }
+    },
+    {
+      "id": "T9",
+      "name": "notation.md doctest execution",
+      "measured": "attempted=24, failures=0",
+      "target": ">=3 attempted, 0 failures",
+      "passed": true,
+      "details": {
+        "attempted": 24,
+        "failures": 0
+      }
+    },
+    {
+      "id": "T10",
+      "name": "determinism & reproducibility",
+      "measured": "bit_identical=True, runtime=0.83 s",
+      "target": "bit-identical & < 60 s",
+      "passed": true,
+      "details": {
+        "bit_identical": true,
+        "runtime_seconds": 0.8347668000496924
+      }
+    }
+  ]
+}
