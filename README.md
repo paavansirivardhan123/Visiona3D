@@ -402,6 +402,37 @@ Every session saved to `logs/session_YYYYMMDD_HHMMSS.jsonl`:
 
 ---
 
+## Perception Interfaces (Research)
+
+The research perception stack wraps real models behind swappable interfaces and
+runs every test on analytic fakes — no model, camera, video file or network.
+
+- **Interfaces:** `perception/interfaces.py` defines `SegOutput`, `DepthOutput`,
+  `Det2D`, `FrameOutputs` and backend Protocols with explicit `validate()` checks.
+- **Fakes:** `perception/fakes.py` renders the analytic scene and applies seeded
+  corruptions (depth scale `k`, noise, outliers, wall-as-floor labels, dropped
+  detections). Perfect fakes give metric-correct wall distance on the first frame.
+- **Pipeline:** `perception/pipeline.py` runs segmentation → depth → detection →
+  ground-plane lift with per-stage timings. Backend failures become status codes
+  instead of exceptions.
+- **Real wrappers:** SegFormer-B0 (ADE20K), Depth Anything V2 Metric
+  Indoor/Outdoor Small, and YOLO11-nano. Heavy libraries are imported lazily and
+  weights are loaded from local/cached files only.
+- **Tools:** `scripts/calibrate_camera.py` (checkerboard intrinsics),
+  `scripts/fetch_models.py` (manifest + dry run), and
+  `scripts/real_models_smoke.py` (real or `--fake` smoke test with PNG overlays).
+- **Docs:** `docs/perception_backends.md` lists model IDs, sizes, class-map rules
+  and fetch/smoke commands.
+
+```bash
+python -m pytest tests audio -q
+python geometry/scripts/run_checks.py
+python scripts/fetch_models.py --dry-run
+python scripts/real_models_smoke.py --images path/to/stills --fake
+```
+
+---
+
 ## Roadmap
 
 - [x] YOLOv8n real-time detection (4 camera feeds)

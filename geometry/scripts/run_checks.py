@@ -12,6 +12,7 @@ import json
 import math
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -292,9 +293,134 @@ def measure_t10() -> dict:
     }
 
 
+def _parse_pytest_nodes(stdout: str) -> dict[str, str]:
+    """Map pytest node id -> PASSED/FAILED/ERROR/SKIPPED from -v output."""
+    statuses: dict[str, str] = {}
+    pattern = re.compile(r"^(\S+::\S+)\s+(PASSED|FAILED|ERROR|SKIPPED)")
+    for line in stdout.splitlines():
+        match = pattern.match(line.strip())
+        if match:
+            statuses[match.group(1)] = match.group(2)
+    return statuses
+
+
+def _node_check(prefix: str, node_status: dict[str, str]) -> tuple[bool, int]:
+    matched = {node: status for node, status in node_status.items() if node.startswith(prefix)}
+    return (bool(matched) and all(status == "PASSED" for status in matched.values()), len(matched))
+
+
+def measure_p7_details() -> dict:
+    """Direct P7 measurements: perfect wall error, first-frame AbsRel, corrupt labels."""
+    from evaluation.metrics_depth import compute_depth_metrics
+    from geometry.scale import ScaleEstimator
+    from perception.fakes import FakeDepthBackend, FakeDetector, FakeSegBackend
+    from perception.pipeline import PerceptionPipeline
+
+    H, W = 240, 320
+    K = Intrinsics.from_fov(width=W, height=H, hfov_deg=75.0)
+    mount = MountConfig(h_known=1.4, pitch_deg=15.0)
+    scene = dict(K=K, H=H, W=W, h=1.4, pitch_deg=15.0, wall_distance=4.0, seed=3)
+    image = np.zeros((H, W, 3), dtype=np.uint8)
+
+    def run(depth_backend, seg_backend):
+        pipeline = PerceptionPipeline(
+            seg=seg_backend,
+            depth=depth_backend,
+            detector=FakeDetector(**scene),
+            K=K,
+            mount=mount,
+            estimator=ScaleEstimator(mount),
+            rng=np.random.default_rng(0),
+        )
+        return pipeline.run(image)
+
+    perfect = run(FakeDepthBackend(**scene), FakeSegBackend(**scene))
+    perfect_wall = float(np.median(perfect.lift.points_g["wall"][:, 1]))
+    perfect_err = abs(perfect_wall - 4.0) / 4.0
+
+    absrels: dict[str, float] = {}
+    for k in (0.6, 1.7):
+        depth_backend = FakeDepthBackend(**scene, k=k)
+        output = run(depth_backend, FakeSegBackend(**scene))
+        valid = depth_backend.wall_mask & np.isfinite(output.lift.scaled_depth)
+        absrels[str(k)] = float(
+            compute_depth_metrics(depth_backend.depth_true, output.lift.scaled_depth, valid_mask=valid)["AbsRel"]
+        )
+
+    corrupt = run(FakeDepthBackend(**scene), FakeSegBackend(**scene, floor_as_wall_fraction=0.30))
+    plane = corrupt.lift.plane_fit
+    corrupt_h_err = abs(plane.h_hat - 1.4) / 1.4
+
+    passed = (
+        perfect_err < 0.02
+        and all(value < 0.02 for value in absrels.values())
+        and corrupt.statuses["lift"] in {s.value for s in FitStatus}
+        and corrupt_h_err < 0.02
+        and plane.inlier_ratio > 0.8
+    )
+    return {
+        "passed": passed,
+        "measured": (
+            f"wall_err={perfect_err:.2%}, AbsRel k=0.6:{absrels['0.6']:.4f}, "
+            f"k=1.7:{absrels['1.7']:.4f}, corrupt h_err={corrupt_h_err:.2%}, "
+            f"inliers={plane.inlier_ratio:.2f}, status={corrupt.statuses['lift']}"
+        ),
+        "details": {
+            "perfect_wall_error": perfect_err,
+            "absrel": absrels,
+            "corrupt_h_error": corrupt_h_err,
+            "corrupt_inlier_ratio": plane.inlier_ratio,
+            "corrupt_status": corrupt.statuses["lift"],
+        },
+    }
+
+
+def build_perception_results(node_status: dict[str, str], suite_seconds: float) -> list[dict]:
+    """Build P1-P13 rows from the single full-suite pytest run."""
+    p7 = measure_p7_details()
+    checks = [
+        ("P1", "interfaces: valid + 6 corruptions", "tests/test_interfaces.py::", "6 corruptions rejected with messages"),
+        ("P2", "class map from names + safety", "tests/test_class_map.py::", "exact mapping; unknown never floor"),
+        ("P3", "softmax + class merging", "tests/test_postprocess.py::test_p3_", "rows sum to 1; merge exact"),
+        ("P4", "resize/letterbox + map_back", "tests/test_postprocess.py::test_p4_", "hand-computed K; map-back <= 1 px"),
+        ("P5", "depth sanitising", "tests/test_postprocess.py::test_p5_", "all invalid -> NaN; valid untouched"),
+        ("P6", "fake backends", "tests/test_fakes.py::", "GT exact; corruption exact; seed stable"),
+        ("P7", "pipeline metric scale + failures", "tests/test_pipeline.py::test_p7_", "wall AbsRel < 0.02 first frame"),
+        ("P8", "pipeline JSONL logging", "tests/test_pipeline.py::test_p8_", "record accepted by schema"),
+        ("P9", "lazy heavy imports", "tests/test_lazy_imports.py::", "no torch/transformers/ultralytics/cv2"),
+        ("P10", "checkerboard calibration", "tests/test_calibrate_camera.py::", "K within 0.5%; <10 views error"),
+        ("P11", "model fetch dry run", "tests/test_fetch_models.py::", "lists all; zero network"),
+        ("P12", "real-model smoke script", "tests/test_pipeline.py::test_p12_", "fake exit 0; missing weights exit 2"),
+        ("P13", "speed + determinism", "tests/test_pipeline.py::test_p13_", "identical repeats; suite < 120 s"),
+    ]
+    results = []
+    for check_id, name, prefix, target in checks:
+        passed, count = _node_check(prefix, node_status)
+        measured = f"{count} test(s) passed"
+        details: dict = {"tests_passed": count, "suite_seconds": suite_seconds}
+        if check_id == "P7":
+            passed = passed and p7["passed"]
+            measured = p7["measured"]
+            details.update(p7["details"])
+        if check_id == "P13":
+            passed = passed and suite_seconds < 120.0
+            measured = f"identical repeats; suite {suite_seconds:.1f}s"
+        results.append(
+            {
+                "id": check_id,
+                "name": name,
+                "measured": measured,
+                "target": target,
+                "passed": bool(passed and count > 0),
+                "details": details,
+            }
+        )
+    return results
+
+
 def main() -> int:
     print("=" * 85)
-    print("VISIONA3D: GEOMETRY MODULE VERIFICATION SUITE")
+    print("VISIONA3D: GEOMETRY + PERCEPTION VERIFICATION SUITE")
     print("=" * 85)
     print(f"Timestamp:       {datetime.datetime.now().isoformat()}")
     print(f"Python Version:  {platform.python_version()}")
@@ -303,18 +429,21 @@ def main() -> int:
     print(f"Platform:        {platform.platform()}")
     print("-" * 85)
 
-    # 1. Run pytest suite on geometry/tests
-    print("\n[Step 1/2] Running full pytest test suite on geometry/tests...")
+    # 1. Run the full pytest suite once (geometry + perception + audio-adjacent tests)
+    print("\n[Step 1/2] Running full pytest test suite on tests/...")
     pytest_cmd = [sys.executable, "-m", "pytest", "tests", "-v"]
+    suite_start = time.perf_counter()
     proc = subprocess.run(pytest_cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
+    suite_seconds = time.perf_counter() - suite_start
     print(proc.stdout)
     if proc.returncode != 0:
         print(proc.stderr)
         print("FAIL: pytest suite returned non-zero exit code!")
         return proc.returncode
+    node_status = _parse_pytest_nodes(proc.stdout)
 
-    # 2. Collect numerical measurements for T1-T10
-    print("[Step 2/2] Measuring quantitative requirements T1-T10...")
+    # 2. Collect numerical measurements for T1-T10 and P1-P13
+    print("[Step 2/2] Measuring quantitative requirements T1-T10 + P1-P13...")
     testers = [
         measure_t1,
         measure_t2,
@@ -329,17 +458,21 @@ def main() -> int:
     ]
 
     results = [fn() for fn in testers]
+    results.extend(build_perception_results(node_status, suite_seconds))
 
-    print("\n" + "=" * 95)
-    print(f"{'Test':<5} | {'Name':<32} | {'Measured Value':<35} | {'Target':<12} | {'Status':<6}")
-    print("-" * 95)
+    print("\n" + "=" * 125)
+    print(f"{'Test':<5} | {'Name':<34} | {'Measured Value':<58} | {'Target':<30} | {'Status':<6}")
+    print("-" * 125)
     all_passed = True
     for res in results:
         status_str = "PASS" if res["passed"] else "FAIL"
-        print(f"{res['id']:<5} | {res['name']:<32} | {res['measured']:<35} | {res['target']:<12} | {status_str:<6}")
+        measured = str(res["measured"])
+        if len(measured) > 58:
+            measured = measured[:57] + "~"
+        print(f"{res['id']:<5} | {res['name']:<34} | {measured:<58} | {res['target']:<30} | {status_str:<6}")
         if not res["passed"]:
             all_passed = False
-    print("=" * 95)
+    print("=" * 125)
 
     # 3. Write report JSON
     reports_dir = REPO_ROOT / "geometry" / "reports"
@@ -362,7 +495,7 @@ def main() -> int:
     print(f"\nWrote geometry verification report to: {report_file}")
 
     if all_passed:
-        print("\nALL GEOMETRY MODULE CHECKS PASSED SUCCESSFULLY.")
+        print("\nALL GEOMETRY + PERCEPTION CHECKS PASSED SUCCESSFULLY.")
         return 0
     else:
         print("\nFAIL: One or more checks failed.")

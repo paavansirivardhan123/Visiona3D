@@ -32,8 +32,9 @@ class ScaleResult:
 class ScaleEstimator:
     """Estimates and temporally filters metric scale correction factor s.
 
-    Maintains an exponential moving average (EMA) of s_raw = h_known / h_hat.
-    Rejects single-frame outliers and clips single-frame rate of change.
+    The first valid measurement initialises s directly from h_known / h_hat so
+    that metric distances are correct from the first frame. EMA smoothing, the
+    per-frame step clip and the persistence rule apply only after initialisation.
     """
 
     def __init__(
@@ -46,6 +47,7 @@ class ScaleEstimator:
         self.s = float(self.cfg.initial_scale)
         self.consecutive_outliers = 0
         self._last_outlier_val: Optional[float] = None
+        self._initialized = False
 
     def update(
         self,
@@ -70,6 +72,14 @@ class ScaleEstimator:
         s_raw = self.mount.h_known / h_hat
         if not np.isfinite(s_raw) or s_raw <= 0.0:
             return ScaleResult(s=self.s, status=FitStatus.IMPLAUSIBLE_GEOMETRY.value)
+
+        # First valid measurement: initialise directly, bypassing EMA/clip/outlier logic.
+        if not self._initialized:
+            self.s = float(s_raw)
+            self._initialized = True
+            self.consecutive_outliers = 0
+            self._last_outlier_val = None
+            return ScaleResult(s=self.s, status="OK")
 
         # Check deviation from current EMA
         deviation = abs(s_raw - self.s) / self.s

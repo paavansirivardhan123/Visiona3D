@@ -143,3 +143,27 @@ Left-inclusive, right-exclusive:
 | light | day, dusk, dark |
 | hazard | glass, mirror, wet, none |
 | crowd | none, low, high |
+
+## Perception conventions
+
+These conventions apply to every new perception backend, fake, pipeline output
+and evaluation record.
+
+- **Images** are RGB `uint8` with shape `(H, W, 3)`.
+- **Depth** is metric z-depth in camera frame C, `float32` `(H, W)`, in metres,
+  with `NaN` where a pixel is invalid. Depth is *not* Euclidean range.
+- **Labels** use the existing mask indices from `core.config`:
+  0 unlabeled, 1 floor, 2 wall, 3 obstacle, 4 other, 255 ignore.
+- **Probabilities** are `float32` `(H, W, 4)` in channel order
+  `[floor, wall, obstacle, other]`, summing to 1 along the channel axis.
+- **Sky** is delivered as a separate boolean `(H, W)` mask. Sky pixels are
+  excluded from depth sanitising and from all label metrics. Sky is never a
+  segmentation probability channel.
+- **Resize / letterbox:** when an image is resized or letterboxed to a model
+  input, intrinsics scale with it: `fx' = sx * fx`, `cx' = sx * cx + pad_x`,
+  `fy' = sy * fy`, `cy' = sy * cy + pad_y`, where `pad_x`/`pad_y` are the
+  left/top pad offsets. Model outputs are mapped back to the ORIGINAL image
+  resolution before use. The original K remains the K of record.
+- **Safety rule:** an unknown or unmapped class label can never map to floor.
+  Unknown names map to other (4); sky maps to other in the label map and is
+  carried separately by the sky mask.

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-19T13:54:59.339655",
+  "timestamp": "2026-10-20T23:35:35.127232",
   "status": "PASSED",
   "software_versions": {
     "python": "3.11.14",
@@ -55,15 +55,15 @@
     {
       "id": "T5",
       "name": "scale recovery across k",
-      "measured": "max_wall_dist_err=0.113% (k in [0.5, 0.8, 1.3, 2.0])",
+      "measured": "max_wall_dist_err=0.000% (k in [0.5, 0.8, 1.3, 2.0])",
       "target": "wall dist < 2%",
       "passed": true,
       "details": {
-        "max_wall_error_pct": 0.11333679558862553,
+        "max_wall_error_pct": 1.5543122344752192e-12,
         "per_k_errors_pct": {
           "0.5": 2.4424906541753444e-13,
-          "0.8": 0.07555786372743789,
-          "1.3": 0.11333679558862553,
+          "0.8": 1.5543122344752192e-12,
+          "1.3": 2.7755575615628914e-13,
           "2.0": 2.4424906541753444e-13
         }
       }
@@ -116,12 +116,163 @@
     {
       "id": "T10",
       "name": "determinism & reproducibility",
-      "measured": "bit_identical=True, runtime=1.24 s",
+      "measured": "bit_identical=True, runtime=0.57 s",
       "target": "bit-identical & < 60 s",
       "passed": true,
       "details": {
         "bit_identical": true,
-        "runtime_seconds": 1.2378096000757068
+        "runtime_seconds": 0.5694851998705417
+      }
+    },
+    {
+      "id": "P1",
+      "name": "interfaces: valid + 6 corruptions",
+      "measured": "7 test(s) passed",
+      "target": "6 corruptions rejected with messages",
+      "passed": true,
+      "details": {
+        "tests_passed": 7,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P2",
+      "name": "class map from names + safety",
+      "measured": "5 test(s) passed",
+      "target": "exact mapping; unknown never floor",
+      "passed": true,
+      "details": {
+        "tests_passed": 5,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P3",
+      "name": "softmax + class merging",
+      "measured": "3 test(s) passed",
+      "target": "rows sum to 1; merge exact",
+      "passed": true,
+      "details": {
+        "tests_passed": 3,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P4",
+      "name": "resize/letterbox + map_back",
+      "measured": "3 test(s) passed",
+      "target": "hand-computed K; map-back <= 1 px",
+      "passed": true,
+      "details": {
+        "tests_passed": 3,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P5",
+      "name": "depth sanitising",
+      "measured": "1 test(s) passed",
+      "target": "all invalid -> NaN; valid untouched",
+      "passed": true,
+      "details": {
+        "tests_passed": 1,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P6",
+      "name": "fake backends",
+      "measured": "5 test(s) passed",
+      "target": "GT exact; corruption exact; seed stable",
+      "passed": true,
+      "details": {
+        "tests_passed": 5,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P7",
+      "name": "pipeline metric scale + failures",
+      "measured": "wall_err=0.00%, AbsRel k=0.6:0.0000, k=1.7:0.0000, corrupt h_err=0.00%, inliers=1.00, status=OK",
+      "target": "wall AbsRel < 0.02 first frame",
+      "passed": true,
+      "details": {
+        "tests_passed": 6,
+        "suite_seconds": 46.989784699864686,
+        "perfect_wall_error": 1.3361289852298341e-09,
+        "absrel": {
+          "0.6": 3.380904672889068e-08,
+          "1.7": 4.782776663033177e-08
+        },
+        "corrupt_h_error": 1.965689706245095e-08,
+        "corrupt_inlier_ratio": 1.0,
+        "corrupt_status": "OK"
+      }
+    },
+    {
+      "id": "P8",
+      "name": "pipeline JSONL logging",
+      "measured": "1 test(s) passed",
+      "target": "record accepted by schema",
+      "passed": true,
+      "details": {
+        "tests_passed": 1,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P9",
+      "name": "lazy heavy imports",
+      "measured": "1 test(s) passed",
+      "target": "no torch/transformers/ultralytics/cv2",
+      "passed": true,
+      "details": {
+        "tests_passed": 1,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P10",
+      "name": "checkerboard calibration",
+      "measured": "2 test(s) passed",
+      "target": "K within 0.5%; <10 views error",
+      "passed": true,
+      "details": {
+        "tests_passed": 2,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P11",
+      "name": "model fetch dry run",
+      "measured": "1 test(s) passed",
+      "target": "lists all; zero network",
+      "passed": true,
+      "details": {
+        "tests_passed": 1,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P12",
+      "name": "real-model smoke script",
+      "measured": "1 test(s) passed",
+      "target": "fake exit 0; missing weights exit 2",
+      "passed": true,
+      "details": {
+        "tests_passed": 1,
+        "suite_seconds": 46.989784699864686
+      }
+    },
+    {
+      "id": "P13",
+      "name": "speed + determinism",
+      "measured": "identical repeats; suite 47.0s",
+      "target": "identical repeats; suite < 120 s",
+      "passed": true,
+      "details": {
+        "tests_passed": 1,
+        "suite_seconds": 46.989784699864686
       }
     }
   ]

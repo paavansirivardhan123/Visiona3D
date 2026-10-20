@@ -23,8 +23,12 @@ Deliberate bugs evaluated:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
+import tempfile
 from typing import Any
 
 # Ensure repository root is on sys.path
@@ -641,8 +645,227 @@ def test_bug_n() -> list[str]:
     return caught_by
 
 
+SOURCE_CONTROLS: list[dict[str, Any]] = [
+    {
+        "id": "P(a)",
+        "desc": "Class map sends wall to floor",
+        "file": "perception/class_map.py",
+        "old": "        mapping[class_id] = targets.pop()",
+        "new": (
+            "        mapping[class_id] = (MASK_FLOOR if targets == {MASK_WALL} "
+            "else targets.pop())"
+        ),
+        "probe": (
+            "from perception.class_map import build_class_map; "
+            "print(build_class_map({0: 'wall'}))"
+        ),
+        "test": "tests/test_class_map.py::test_p2_default_rules_map_exact",
+    },
+    {
+        "id": "P(b)",
+        "desc": "Unknown names default to floor",
+        "file": "perception/class_map.py",
+        "old": (
+            "            else:\n"
+            "                # Unknown names are deliberately other, never floor.\n"
+            "                targets.add(MASK_OTHER)"
+        ),
+        "new": (
+            "            else:\n"
+            "                # Injected bug: unknown names default to floor.\n"
+            "                targets.add(MASK_FLOOR)"
+        ),
+        "probe": (
+            "from perception.class_map import build_class_map; "
+            "print(build_class_map({0: 'banana'}))"
+        ),
+        "test": "tests/test_class_map.py::test_p2_unknown_names_never_map_to_floor",
+    },
+    {
+        "id": "P(c)",
+        "desc": "Softmax without max subtraction",
+        "file": "perception/postprocess.py",
+        "old": "    shifted = values - safe_max",
+        "new": "    shifted = values",
+        "probe": (
+            "import numpy as np; from perception.postprocess import stable_softmax; "
+            "p = stable_softmax(np.array([[10000.0, 5000.0, -10000.0]])); "
+            "print(np.isfinite(p).all(), p)"
+        ),
+        "test": "tests/test_postprocess.py::test_p3_softmax_rows_sum_to_one_and_stable",
+    },
+    {
+        "id": "P(d)",
+        "desc": "Intrinsics not scaled after resize",
+        "file": "geometry/camera.py",
+        "old": "    return Intrinsics(\n        fx=fx * sx,\n        fy=fy * sy,",
+        "new": "    return Intrinsics(\n        fx=fx,\n        fy=fy,",
+        "probe": (
+            "from core.config import Intrinsics; from geometry.camera import scale_intrinsics; "
+            "k = scale_intrinsics(Intrinsics(1000.0, 900.0, 640.0, 360.0, 1280, 720), 0.5, 0.5); "
+            "print(k.fx, k.fy, k.cx, k.cy)"
+        ),
+        "test": "tests/test_postprocess.py::test_p4_scale_intrinsics_and_letterbox_hand_computed",
+    },
+    {
+        "id": "P(e)",
+        "desc": "Letterbox pad offset not applied",
+        "file": "geometry/camera.py",
+        "old": "        cx=cx * sx + pad_x,",
+        "new": "        cx=cx * sx,",
+        "probe": (
+            "from core.config import Intrinsics; from geometry.camera import scale_intrinsics; "
+            "k = scale_intrinsics(Intrinsics(500.0, 500.0, 200.0, 400.0, 400, 800), 0.8, 0.8, 160, 0); "
+            "print(k.cx, k.cy)"
+        ),
+        "test": "tests/test_postprocess.py::test_p4_scale_intrinsics_and_letterbox_hand_computed",
+    },
+    {
+        "id": "P(f)",
+        "desc": "sanitize_depth leaves sky pixels valid",
+        "file": "perception/postprocess.py",
+        "old": "        invalid |= sky",
+        "new": "        invalid |= np.zeros_like(invalid, dtype=bool)",
+        "probe": (
+            "import numpy as np; from perception.postprocess import sanitize_depth; "
+            "d = np.ones((2, 2), dtype=np.float32); s = np.zeros((2, 2), dtype=bool); "
+            "s[0, 0] = True; print(sanitize_depth(d, 10.0, s))"
+        ),
+        "test": "tests/test_postprocess.py::test_p5_sanitize_depth_all_invalid_categories",
+    },
+    {
+        "id": "P(g)",
+        "desc": "Pipeline maps depth back with wrong axis order",
+        "file": "perception/pipeline.py",
+        "old": '    return map_back(arr, info, kind="depth")',
+        "new": '    return map_back(arr.T, info, kind="depth")',
+        "probe": (
+            "import numpy as np; from perception.pipeline import align_depth_to_image; "
+            "print(align_depth_to_image(np.ones((120, 160), dtype=np.float32), (240, 320)).shape)"
+        ),
+        "test": "tests/test_pipeline.py::test_p7_model_resolution_depth_is_mapped_back",
+    },
+    {
+        "id": "P(h)",
+        "desc": "Initial scale fixed at initial_scale (1.0)",
+        "file": "geometry/scale.py",
+        "old": "        if not self._initialized:\n            self.s = float(s_raw)",
+        "new": "        if not self._initialized:\n            self.s = float(self.cfg.initial_scale)",
+        "probe": (
+            "from core.config import MountConfig; from geometry.scale import ScaleEstimator; "
+            "print(ScaleEstimator(MountConfig()).update(0.7).s)"
+        ),
+        "test": "tests/test_scale.py::test_first_valid_frame_initialises_scale_directly",
+    },
+]
+
+
+def _copy_repo(destination: Path) -> None:
+    """Copy the working tree without VCS, virtualenv, media or secret files."""
+    ignore = shutil.ignore_patterns(
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".early.coverage",
+        ".coverage*",
+        ".env",
+        "sample-vid",
+        "logs",
+        "database",
+        "*.pt",
+        "*.pth",
+        "*.mp4",
+    )
+    shutil.copytree(REPO_ROOT, destination, ignore=ignore)
+
+
+def _probe(workdir: Path, code: str) -> tuple[int, str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(workdir)
+    env.pop("PYTHONHOME", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(workdir),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    return proc.returncode, proc.stdout.strip()
+
+
+def _pytest(workdir: Path, nodes: list[str]) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(workdir)
+    env.pop("PYTHONHOME", None)
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", *nodes, "-q", "--tb=no", "-p", "no:cacheprovider"],
+        cwd=str(workdir),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def run_source_level_controls() -> tuple[bool, list[tuple[str, str, str, str]]]:
+    """Apply source mutations to isolated copies; assert each is effective and caught."""
+    rows: list[tuple[str, str, str, str]] = []
+    all_caught = True
+    nodes = sorted({control["test"] for control in SOURCE_CONTROLS})
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        base = root / "base"
+        _copy_repo(base)
+
+        pre = _pytest(base, nodes)
+        if pre.returncode != 0:
+            print("ERROR: unpatched isolated copy does not pass the selected tests.")
+            print(pre.stdout)
+            print(pre.stderr)
+            return False, [("PRE-RUN", "isolated copy", "n/a", "ERROR")]
+
+        for index, control in enumerate(SOURCE_CONTROLS):
+            work = root / f"control_{index}"
+            shutil.copytree(
+                base,
+                work,
+                ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"),
+            )
+            path = work / control["file"]
+            original_text = path.read_text(encoding="utf-8")
+            if control["old"] not in original_text:
+                raise RuntimeError(
+                    f"source control {control['id']}: patch target not found in {control['file']}"
+                )
+            patched_text = original_text.replace(control["old"], control["new"], 1)
+            if patched_text == original_text:
+                raise NoOpMutationError(f"NO-OP MUTATION: {control['id']} {control['desc']}")
+            path.write_text(patched_text, encoding="utf-8")
+
+            original_probe = _probe(REPO_ROOT, control["probe"])
+            mutated_probe = _probe(work, control["probe"])
+            if original_probe == mutated_probe:
+                raise NoOpMutationError(f"NO-OP MUTATION: {control['id']} {control['desc']}")
+
+            result = _pytest(work, [control["test"]])
+            caught = result.returncode != 0
+            if not caught:
+                all_caught = False
+            rows.append(
+                (
+                    control["id"],
+                    control["desc"],
+                    "YES" if original_probe != mutated_probe else "NO",
+                    "YES" if caught else "NO",
+                )
+            )
+    return all_caught, rows
+
+
 def main() -> int:
-    """Run all negative controls and print verification table."""
+    """Run all negative controls and print verification tables."""
     print("=" * 80)
     print("NEGATIVE CONTROLS VERIFICATION (GEOMETRY MODULE + DATASET/EVAL)")
     print("=" * 80)
@@ -684,9 +907,28 @@ def main() -> int:
             all_passed = False
 
     print("=" * 90)
+
+    print("\nSOURCE-LEVEL PERCEPTION MUTATIONS (isolated temporary package copies)")
+    print("=" * 90)
+    try:
+        source_passed, source_rows = run_source_level_controls()
+    except NoOpMutationError as exc:
+        print(str(exc))
+        return 3
+    print(f"{'Control':<7} | {'Mutation':<48} | {'Probe':<5} | {'Caught':<6} | Status")
+    print("-" * 90)
+    for control_id, desc, probe_changed, caught in source_rows:
+        status_str = "YES" if probe_changed == "YES" and caught == "YES" else "NO"
+        print(f"{control_id:<7} | {desc:<48} | {probe_changed:<5} | {caught:<6} | {status_str}")
+    print("=" * 90)
+
     total_bugs = len(controls)
-    if all_passed:
-        print(f"ALL {total_bugs} DELIBERATE BUGS SUCCESSFULLY CAUGHT BY TEST SUITE.")
+    total_source = len(SOURCE_CONTROLS)
+    if all_passed and source_passed:
+        print(
+            f"ALL {total_bugs} ORIGINAL BUGS AND {total_source} SOURCE-LEVEL "
+            "PERCEPTION MUTATIONS CAUGHT."
+        )
         return 0
     else:
         print("FAIL: One or more bugs were not caught!")

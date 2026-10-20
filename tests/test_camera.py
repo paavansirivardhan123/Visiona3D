@@ -6,7 +6,14 @@ import numpy as np
 import pytest
 
 from core.config import Intrinsics
-from geometry.camera import backproject, project, ray_directions, range_to_depth, depth_to_range
+from geometry.camera import (
+    backproject,
+    depth_to_range,
+    project,
+    range_to_depth,
+    ray_directions,
+    scale_intrinsics,
+)
 
 
 def test_t1_project_backproject_roundtrip():
@@ -109,3 +116,34 @@ def test_range_depth_off_axis_known_value():
     assert np.isclose(computed_depth, expected_depth, rtol=1e-9), (
         f"Off-axis depth {computed_depth} != expected {expected_depth}"
     )
+
+
+# --- P4: intrinsics scaling for resize and letterbox ---
+
+def test_scale_intrinsics_half_resolution_hand_computed():
+    """P4: A 2x downscale halves fx/fy/cx/cy and the image size.
+
+    K = (fx=1000, fy=900, cx=640, cy=360, 1280x720), sx=sy=0.5:
+      fx'=500, fy'=450, cx'=320, cy'=180, 640x360.
+    """
+    K = Intrinsics(fx=1000.0, fy=900.0, cx=640.0, cy=360.0, width=1280, height=720)
+    K2 = scale_intrinsics(K, 0.5, 0.5)
+    assert K2.fx == pytest.approx(500.0)
+    assert K2.fy == pytest.approx(450.0)
+    assert K2.cx == pytest.approx(320.0)
+    assert K2.cy == pytest.approx(180.0)
+    assert (K2.width, K2.height) == (640, 360)
+
+
+def test_scale_intrinsics_letterbox_hand_computed():
+    """P4: 1280x720 letterboxed into 640x640: scale 0.5, top pad 140.
+
+    fx'=500, fy'=500, cx'=320, cy'=360*0.5+140=320, output 640x640.
+    """
+    K = Intrinsics(fx=1000.0, fy=1000.0, cx=640.0, cy=360.0, width=1280, height=720)
+    K2 = scale_intrinsics(K, 0.5, 0.5, pad_x=0.0, pad_y=140.0)
+    assert K2.fx == pytest.approx(500.0)
+    assert K2.fy == pytest.approx(500.0)
+    assert K2.cx == pytest.approx(320.0)
+    assert K2.cy == pytest.approx(320.0)
+    assert (K2.width, K2.height) == (640, 640)

@@ -23,6 +23,51 @@ def _extract_intrinsics(K: Union[Intrinsics, np.ndarray]) -> tuple[float, float,
     raise TypeError(f"Expected Intrinsics or (3, 3) np.ndarray, got {type(K)}")
 
 
+def scale_intrinsics(
+    K: Union[Intrinsics, np.ndarray],
+    sx: float,
+    sy: float,
+    pad_x: float = 0.0,
+    pad_y: float = 0.0,
+) -> Intrinsics:
+    """Scale intrinsics for a resize and optional letterbox padding.
+
+    Pinhole intrinsics transform under an axis-aligned resize as
+    ``fx' = sx * fx``, ``cx' = sx * cx + pad_x`` and likewise for y. The
+    letterbox pads are the left/top offsets added by the pad operation.
+    The original K remains the K of record; this helper returns the K to use
+    with the resized image.
+
+    Args:
+        K: Original Intrinsics or 3x3 camera matrix.
+        sx: Horizontal scale factor applied to the source image.
+        sy: Vertical scale factor applied to the source image.
+        pad_x: Left padding in output pixels (0 for a plain resize).
+        pad_y: Top padding in output pixels (0 for a plain resize).
+
+    Returns:
+        Intrinsics with scaled focal lengths and principal point. When K is an
+        Intrinsics instance, width/height describe the padded output image.
+    """
+    fx, fy, cx, cy = _extract_intrinsics(K)
+
+    if isinstance(K, Intrinsics):
+        width = int(round(K.width * sx + 2.0 * pad_x))
+        height = int(round(K.height * sy + 2.0 * pad_y))
+    else:
+        width = int(round(2.0 * (cx * sx + pad_x)))
+        height = int(round(2.0 * (cy * sy + pad_y)))
+
+    return Intrinsics(
+        fx=fx * sx,
+        fy=fy * sy,
+        cx=cx * sx + pad_x,
+        cy=cy * sy + pad_y,
+        width=width,
+        height=height,
+    )
+
+
 def project(points_c: np.ndarray, K: Union[Intrinsics, np.ndarray]) -> np.ndarray:
     """Project 3D points in camera frame C to pixel coordinates (u, v).
 
