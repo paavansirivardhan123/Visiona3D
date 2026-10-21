@@ -10,6 +10,8 @@ from agents.tools.vision_tools import (
     mark_goal_completed, lower_goal_candidate_priority
 )
 
+OFFLINE_REPLY = "I can't reach the assistant right now."
+
 class AgentEngine:
     """
     The Central Brain. This engine loads the 10 Agent Tool workflows and 
@@ -19,6 +21,7 @@ class AgentEngine:
     def __init__(self, tts_callback=None, search_intent_callback=None):
         self.tts = tts_callback
         self.trigger_search = search_intent_callback
+        self.llm = None
         self.llm_with_tools = None
         self.tools_map = {}
 
@@ -103,7 +106,7 @@ class AgentEngine:
 
         if not self.llm_with_tools:
             if self.tts:
-                self.tts("My reasoning systems are currently offline. Please add an API key.")
+                self.tts(OFFLINE_REPLY)
             return
 
         # Fetch historical memory context
@@ -186,4 +189,4 @@ class AgentEngine:
                 f.write(f"ERROR: {e}\n")
             print(f"  [Agent] Inference Error: {e}")
             if self.tts:
-                self.tts("I am currently experiencing an error in my reasoning brain.")
+                self.tts(OFFLINE_REPLY)
