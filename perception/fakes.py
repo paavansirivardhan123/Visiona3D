@@ -121,7 +121,13 @@ class FakeDepthBackend(_FakeSceneBase):
 
 
 class FakeSegBackend(_FakeSceneBase):
-    """Segmentation backend with exact-pixel label corruptions."""
+    """Segmentation backend with exact-pixel label corruptions.
+
+    ``floor_as_wall_fraction`` relabels floor pixels as wall (safe direction:
+    the floor plane fit is not polluted). ``wall_as_floor_fraction`` relabels
+    wall pixels as floor (unsafe direction: vertical wall points enter the
+    ground-plane fit).
+    """
 
     def __init__(
         self,

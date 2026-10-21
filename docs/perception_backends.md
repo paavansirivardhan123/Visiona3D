@@ -71,6 +71,7 @@ See `geometry/notation.md` ("Perception conventions") for the canonical rules.
 | `perception/class_map.py` | name-based class mapping and default rules |
 | `perception/postprocess.py` | stable softmax, class-probability merge, letterbox/resize, NaN-aware map-back, depth sanitising |
 | `perception/fakes.py` | analytic fake segmentation/depth/detector with seeded corruptions |
+| Fake label directions | `floor_as_wall_fraction` = floor→wall (safe); `wall_as_floor_fraction` = wall→floor (unsafe, pollutes the plane fit) |
 | `perception/seg_backend.py` | SegFormer-B0 ADE20K wrapper (lazy torch/transformers) |
 | `perception/depth_backend.py` | Depth Anything V2 metric indoor/outdoor wrapper (lazy) |
 | `perception/detector_backend.py` | YOLO11-nano wrapper (lazy ultralytics) |

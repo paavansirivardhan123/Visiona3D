@@ -410,8 +410,9 @@ runs every test on analytic fakes — no model, camera, video file or network.
 - **Interfaces:** `perception/interfaces.py` defines `SegOutput`, `DepthOutput`,
   `Det2D`, `FrameOutputs` and backend Protocols with explicit `validate()` checks.
 - **Fakes:** `perception/fakes.py` renders the analytic scene and applies seeded
-  corruptions (depth scale `k`, noise, outliers, wall-as-floor labels, dropped
-  detections). Perfect fakes give metric-correct wall distance on the first frame.
+  corruptions (depth scale `k`, noise, outliers, floor-as-wall and wall-as-floor
+  labels, dropped detections). Perfect fakes give metric-correct wall distance on
+  the first frame.
 - **Pipeline:** `perception/pipeline.py` runs segmentation → depth → detection →
   ground-plane lift with per-stage timings. Backend failures become status codes
   instead of exceptions.

@@ -91,6 +91,32 @@ def test_p7_corrupt_floor_labels_do_not_raise_and_report_status():
     assert output.statuses["seg"] == "OK"
 
 
+@pytest.mark.parametrize("fraction", [0.0, 0.10, 0.20, 0.30])
+def test_p7_wall_as_floor_sweep_never_reports_ok_with_large_height_error(fraction):
+    """The unsafe wall->floor direction must be flagged or numerically harmless.
+
+    ``wall_as_floor_fraction`` relabels wall pixels as floor, so the ground-plane
+    fit is fed a vertical surface. For each fraction, a non-OK lift status flags
+    the problem; an OK lift is allowed only when the plane height error is <5%.
+    """
+    seg_backend = FakeSegBackend(**SCENE, wall_as_floor_fraction=fraction)
+    output = _pipeline(seg=seg_backend).run(IMAGE)
+    assert output.lift is not None
+
+    plane = output.lift.plane_fit
+    h_error = abs(plane.h_hat - 1.4) / 1.4
+    status = output.statuses["lift"]
+    print(
+        f"P7 wall_as_floor={fraction:.2f}: lift_status={status}, "
+        f"plane_h_err={h_error:.4%}, inlier_ratio={plane.inlier_ratio:.4f}, "
+        f"h_hat={plane.h_hat:.4f}"
+    )
+    assert status != "OK" or h_error < 0.05, (
+        f"wall_as_floor={fraction:.2f}: lift reported OK with height error "
+        f"{h_error:.4%} (status={status})"
+    )
+
+
 def test_p7_backend_exception_becomes_status():
     class RaisingBackend:
         def predict(self, image_rgb):
