@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-20T23:35:35.127232",
+  "timestamp": "2026-10-21T12:57:33.450743",
   "status": "PASSED",
   "software_versions": {
     "python": "3.11.14",
@@ -116,12 +116,12 @@
     {
       "id": "T10",
       "name": "determinism & reproducibility",
-      "measured": "bit_identical=True, runtime=0.57 s",
+      "measured": "bit_identical=True, runtime=0.51 s",
       "target": "bit-identical & < 60 s",
       "passed": true,
       "details": {
         "bit_identical": true,
-        "runtime_seconds": 0.5694851998705417
+        "runtime_seconds": 0.5120281002018601
       }
     },
     {
@@ -132,7 +132,7 @@
       "passed": true,
       "details": {
         "tests_passed": 7,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -143,7 +143,7 @@
       "passed": true,
       "details": {
         "tests_passed": 5,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -154,7 +154,7 @@
       "passed": true,
       "details": {
         "tests_passed": 3,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -165,7 +165,7 @@
       "passed": true,
       "details": {
         "tests_passed": 3,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -176,7 +176,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -187,7 +187,7 @@
       "passed": true,
       "details": {
         "tests_passed": 5,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -197,8 +197,8 @@
       "target": "wall AbsRel < 0.02 first frame",
       "passed": true,
       "details": {
-        "tests_passed": 6,
-        "suite_seconds": 46.989784699864686,
+        "tests_passed": 10,
+        "suite_seconds": 45.845120599959046,
         "perfect_wall_error": 1.3361289852298341e-09,
         "absrel": {
           "0.6": 3.380904672889068e-08,
@@ -217,7 +217,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -228,7 +228,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -239,7 +239,7 @@
       "passed": true,
       "details": {
         "tests_passed": 2,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -250,7 +250,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
@@ -261,18 +261,29 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046
       }
     },
     {
       "id": "P13",
       "name": "speed + determinism",
-      "measured": "identical repeats; suite 47.0s",
-      "target": "identical repeats; suite < 120 s",
+      "measured": "identical repeats; perception 10.2s",
+      "target": "identical repeats; perception tests < 30 s",
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 46.989784699864686
+        "suite_seconds": 45.845120599959046,
+        "perception_seconds": 10.194346900098026,
+        "perception_files": [
+          "tests/test_interfaces.py",
+          "tests/test_class_map.py",
+          "tests/test_postprocess.py",
+          "tests/test_fakes.py",
+          "tests/test_pipeline.py",
+          "tests/test_calibrate_camera.py",
+          "tests/test_fetch_models.py",
+          "tests/test_lazy_imports.py"
+        ]
       }
     }
   ]

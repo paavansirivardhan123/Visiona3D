@@ -375,8 +375,24 @@ def measure_p7_details() -> dict:
     }
 
 
-def build_perception_results(node_status: dict[str, str], suite_seconds: float) -> list[dict]:
-    """Build P1-P13 rows from the single full-suite pytest run."""
+PERCEPTION_TEST_FILES = (
+    "tests/test_interfaces.py",
+    "tests/test_class_map.py",
+    "tests/test_postprocess.py",
+    "tests/test_fakes.py",
+    "tests/test_pipeline.py",
+    "tests/test_calibrate_camera.py",
+    "tests/test_fetch_models.py",
+    "tests/test_lazy_imports.py",
+)
+
+
+def build_perception_results(
+    node_status: dict[str, str],
+    suite_seconds: float,
+    perception_seconds: float,
+) -> list[dict]:
+    """Build P1-P13 rows from the full-suite and new-perception pytest runs."""
     p7 = measure_p7_details()
     checks = [
         ("P1", "interfaces: valid + 6 corruptions", "tests/test_interfaces.py::", "6 corruptions rejected with messages"),
@@ -391,7 +407,7 @@ def build_perception_results(node_status: dict[str, str], suite_seconds: float) 
         ("P10", "checkerboard calibration", "tests/test_calibrate_camera.py::", "K within 0.5%; <10 views error"),
         ("P11", "model fetch dry run", "tests/test_fetch_models.py::", "lists all; zero network"),
         ("P12", "real-model smoke script", "tests/test_pipeline.py::test_p12_", "fake exit 0; missing weights exit 2"),
-        ("P13", "speed + determinism", "tests/test_pipeline.py::test_p13_", "identical repeats; suite < 120 s"),
+        ("P13", "speed + determinism", "tests/test_pipeline.py::test_p13_", "identical repeats; perception tests < 30 s"),
     ]
     results = []
     for check_id, name, prefix, target in checks:
@@ -403,8 +419,10 @@ def build_perception_results(node_status: dict[str, str], suite_seconds: float) 
             measured = p7["measured"]
             details.update(p7["details"])
         if check_id == "P13":
-            passed = passed and suite_seconds < 120.0
-            measured = f"identical repeats; suite {suite_seconds:.1f}s"
+            passed = passed and perception_seconds < 30.0
+            measured = f"identical repeats; perception {perception_seconds:.1f}s"
+            details["perception_seconds"] = perception_seconds
+            details["perception_files"] = list(PERCEPTION_TEST_FILES)
         results.append(
             {
                 "id": check_id,
@@ -442,8 +460,31 @@ def main() -> int:
         return proc.returncode
     node_status = _parse_pytest_nodes(proc.stdout)
 
-    # 2. Collect numerical measurements for T1-T10 and P1-P13
-    print("[Step 2/2] Measuring quantitative requirements T1-T10 + P1-P13...")
+    # 2. Time only the new perception tests (P13 gate; independent of suite runtime)
+    print("\n[Step 2/3] Timing new perception tests...")
+    perception_cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        *PERCEPTION_TEST_FILES,
+        "-q",
+        "-p",
+        "no:cacheprovider",
+    ]
+    perception_start = time.perf_counter()
+    perception_proc = subprocess.run(
+        perception_cmd, cwd=str(REPO_ROOT), capture_output=True, text=True
+    )
+    perception_seconds = time.perf_counter() - perception_start
+    print(perception_proc.stdout)
+    if perception_proc.returncode != 0:
+        print(perception_proc.stderr)
+        print("FAIL: new perception tests returned non-zero exit code!")
+        return perception_proc.returncode
+    print(f"New perception tests: {perception_seconds:.2f} s")
+
+    # 3. Collect numerical measurements for T1-T10 and P1-P13
+    print("[Step 3/3] Measuring quantitative requirements T1-T10 + P1-P13...")
     testers = [
         measure_t1,
         measure_t2,
@@ -458,7 +499,9 @@ def main() -> int:
     ]
 
     results = [fn() for fn in testers]
-    results.extend(build_perception_results(node_status, suite_seconds))
+    results.extend(
+        build_perception_results(node_status, suite_seconds, perception_seconds)
+    )
 
     print("\n" + "=" * 125)
     print(f"{'Test':<5} | {'Name':<34} | {'Measured Value':<58} | {'Target':<30} | {'Status':<6}")
