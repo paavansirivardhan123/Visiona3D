@@ -1,0 +1,108 @@
+{
+  "metadata": {
+    "title": "Visiona-Walk Mapping & Planning Synthetic Ablation",
+    "tag": "SYNTHETIC ONLY",
+    "n_scenes": 200,
+    "seed": 42,
+    "timestamp": "2026-10-22T18:03:18Z",
+    "total_elapsed_s": 59.62030329997651
+  },
+  "variants": {
+    "A_naive": {
+      "unsafe_rate": 0.105,
+      "unsafe_rate_ci": [
+        0.065,
+        0.15
+      ],
+      "unsafe_rate_corrupted_scenes": 0.14,
+      "unsafe_rate_corrupted_ci": [
+        0.07,
+        0.21
+      ],
+      "availability": 0.795,
+      "availability_ci": [
+        0.739875,
+        0.85
+      ],
+      "mean_min_clearance_m": 0.09999999999999998,
+      "mean_min_clearance_ci": [
+        0.09999999999999998,
+        0.09999999999999998
+      ],
+      "latency_p50_ms": 36.269749980419874,
+      "latency_p95_ms": 57.80580487335093
+    },
+    "B_conformal_floor": {
+      "unsafe_rate": 0.0,
+      "unsafe_rate_ci": [
+        0.0,
+        0.0
+      ],
+      "unsafe_rate_corrupted_scenes": 0.0,
+      "unsafe_rate_corrupted_ci": [
+        0.0,
+        0.0
+      ],
+      "availability": 0.655,
+      "availability_ci": [
+        0.59,
+        0.7201249999999999
+      ],
+      "mean_min_clearance_m": 0.3947534226886112,
+      "mean_min_clearance_ci": [
+        0.39195921838320225,
+        0.39788357922554884
+      ],
+      "latency_p50_ms": 28.28079997561872,
+      "latency_p95_ms": 41.11499498831108
+    },
+    "C_geometric_veto": {
+      "unsafe_rate": 0.0,
+      "unsafe_rate_ci": [
+        0.0,
+        0.0
+      ],
+      "unsafe_rate_corrupted_scenes": 0.0,
+      "unsafe_rate_corrupted_ci": [
+        0.0,
+        0.0
+      ],
+      "availability": 0.145,
+      "availability_ci": [
+        0.09987500000000002,
+        0.19
+      ],
+      "mean_min_clearance_m": 0.49126909459150137,
+      "mean_min_clearance_ci": [
+        0.4863924961005598,
+        0.4973289542910901
+      ],
+      "latency_p50_ms": 20.7554999506101,
+      "latency_p95_ms": 39.59945990936828
+    },
+    "D_conformal_margin": {
+      "unsafe_rate": 0.0,
+      "unsafe_rate_ci": [
+        0.0,
+        0.0
+      ],
+      "unsafe_rate_corrupted_scenes": 0.0,
+      "unsafe_rate_corrupted_ci": [
+        0.0,
+        0.0
+      ],
+      "availability": 0.085,
+      "availability_ci": [
+        0.05,
+        0.125
+      ],
+      "mean_min_clearance_m": 0.49620787681957274,
+      "mean_min_clearance_ci": [
+        0.487874193355115,
+        0.5055360323350251
+      ],
+      "latency_p50_ms": 51.409500068984926,
+      "latency_p95_ms": 105.56472518946967
+    }
+  }
+}

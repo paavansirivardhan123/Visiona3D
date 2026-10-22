@@ -19,6 +19,19 @@ Deliberate bugs evaluated:
 (l) Interval score drops the penalty term.
 (m) False-walkable rate counts ignore pixels.
 (n) range_to_depth returns range unchanged.
+
+Source-level mapping/planning controls (each patches an isolated temporary
+copy of the package, verifies the mutation changes probe behaviour, then
+asserts the mapped test fails):
+M(a) Costmap treats UNKNOWN/UNCERTAIN cells as traversable.
+M(b) Costmap inflation radius is zero.
+M(c) Pessimistic layer uses the conformal upper instead of the lower bound.
+M(d) Obstacle height-band top cut to 0.3 m (overhangs walkable).
+M(e) Odometry warp translates evidence in the wrong direction.
+M(f) A* allows diagonal corner cutting.
+M(g) Explore target picks the nearest instead of the farthest frontier.
+M(h) Smoothing collision fallback is disabled.
+M(i) Free votes override occupied votes in the BEV resolve rule.
 """
 
 from __future__ import annotations
@@ -760,6 +773,218 @@ SOURCE_CONTROLS: list[dict[str, Any]] = [
 ]
 
 
+MAP_PLANNING_CONTROLS: list[dict[str, Any]] = [
+    {
+        "id": "M(a)",
+        "desc": "UNKNOWN/UNCERTAIN treated as traversable",
+        "file": "planning/costmap.py",
+        "old": "    raw_blocked = grid != CELL_FREE",
+        "new": "    raw_blocked = grid == CELL_OCCUPIED",
+        "probe": (
+            "import numpy as np\n"
+            "from mapping.grid import MapConfig\n"
+            "from planning.costmap import build_costmap\n"
+            "g = np.zeros((6, 6), dtype=np.uint8)\n"
+            "cfg = MapConfig(res=1.0, x_min=-3.0, x_max=3.0, y_min=0.0, y_max=6.0)\n"
+            "cm = build_costmap(g, cfg=cfg)\n"
+            "print(cm.is_passable(3, 3))\n"
+        ),
+        "test": "tests/test_astar.py::test_m3_certified_only_never_uses_unknown_or_uncertain",
+    },
+    {
+        "id": "M(b)",
+        "desc": "Costmap inflation radius is zero",
+        "file": "planning/costmap.py",
+        "old": "    inflation_radius_m = float(user_half_width_m) + float(safety_margin_m)",
+        "new": "    inflation_radius_m = 0.0",
+        "probe": (
+            "import numpy as np\n"
+            "from mapping.grid import CELL_FREE, CELL_OCCUPIED, MapConfig, cell_to_world\n"
+            "from planning.costmap import build_costmap\n"
+            "cfg = MapConfig(res=0.05, x_min=-2.0, x_max=2.0, y_min=0.0, y_max=4.0)\n"
+            "grid = np.full((cfg.n_rows, cfg.n_cols), CELL_FREE, dtype=np.uint8)\n"
+            "for r in range(cfg.n_rows):\n"
+            "    for c in range(cfg.n_cols):\n"
+            "        wx, _wy = cell_to_world(c, r, cfg)\n"
+            "        if wx <= -0.45 or wx >= 0.45:\n"
+            "            grid[r, c] = CELL_OCCUPIED\n"
+            "cm = build_costmap(grid, cfg=cfg, user_half_width_m=0.35, safety_margin_m=0.10)\n"
+            "print(cm.is_passable(40, 40))\n"
+        ),
+        "test": "tests/test_costmap.py::test_m4_inflation_hand_verified_corridor_widths",
+    },
+    {
+        "id": "M(c)",
+        "desc": "Pessimistic layer uses conformal upper bound",
+        "file": "perception/pipeline.py",
+        "old": (
+            "                            lower_depth = "
+            "c_pred.lower.reshape(depth_output.depth_m.shape)"
+        ),
+        "new": (
+            "                            lower_depth = "
+            "c_pred.upper.reshape(depth_output.depth_m.shape)"
+        ),
+        "probe": (
+            "import numpy as np\n"
+            "from calibration.conformal_depth import ConformalDepth\n"
+            "from core.config import Intrinsics, MountConfig, ScaleConfig\n"
+            "from geometry.scale import ScaleEstimator\n"
+            "from perception.fakes import FakeDepthBackend, FakeDetector, FakeSegBackend\n"
+            "from perception.pipeline import PerceptionPipeline\n"
+            "K = Intrinsics.from_fov(320, 240, 75.0)\n"
+            "mount = MountConfig(h_known=1.4, pitch_deg=15.0)\n"
+            "scene_args = {'K': K, 'H': 240, 'W': 320, 'h': mount.h_known, "
+            "'pitch_deg': mount.pitch_deg, 'wall_distance': 4.0, 'boxes': [], 'seed': 21}\n"
+            "cdepth = ConformalDepth(alpha=0.10, score='overestimation')\n"
+            "fake_gt = np.linspace(1.0, 6.0, 100)\n"
+            "cdepth.fit(fake_gt * 1.25, fake_gt)\n"
+            "pipeline = PerceptionPipeline(seg=FakeSegBackend(**scene_args), "
+            "depth=FakeDepthBackend(**scene_args), detector=FakeDetector(**scene_args), "
+            "K=K, mount=mount, estimator=ScaleEstimator(mount, ScaleConfig()), "
+            "conformal_depth=cdepth, floor_threshold=0.50)\n"
+            "outputs = pipeline.run(np.zeros((240, 320, 3), dtype=np.uint8))\n"
+            "wall_px = outputs.seg.labels == 2\n"
+            "print(float(np.nanmedian(outputs.pessimistic_pointmap_g[wall_px, 1])))\n"
+        ),
+        "test": "tests/test_planner_e2e.py::test_m11_pessimistic_pointmap_places_wall_at_lower_bound",
+    },
+    {
+        "id": "M(d)",
+        "desc": "Height band top cut to 0.3 m (overhangs free)",
+        "file": "mapping/grid.py",
+        "old": "DEFAULT_Z_BAND_MAX_M: float = 2.0  # TO TUNE ON REAL DATA: height band upper bound",
+        "new": "DEFAULT_Z_BAND_MAX_M: float = 0.3  # TO TUNE ON REAL DATA: height band upper bound",
+        "probe": (
+            "import numpy as np\n"
+            "from mapping.bev import build_bev\n"
+            "from mapping.grid import MapConfig\n"
+            "pts = np.tile([0.05, 1.55, 1.2], (6, 1))\n"
+            "labels = np.zeros(6, dtype=np.int64)\n"
+            "bev = build_bev(pts, labels, cfg=MapConfig())\n"
+            "print(int(bev.grid[20, 30]))\n"
+        ),
+        "test": "tests/test_bev.py::test_m2_bev_floating_box_overhang_is_occupied",
+    },
+    {
+        "id": "M(e)",
+        "desc": "Odometry warp shifts evidence backwards",
+        "file": "mapping/rolling.py",
+        "old": (
+            "        x_old = cos_y * x_new + sin_y * y_new + dx\n"
+            "        y_old = -sin_y * x_new + cos_y * y_new + dy"
+        ),
+        "new": (
+            "        x_old = cos_y * x_new + sin_y * y_new - dx\n"
+            "        y_old = -sin_y * x_new + cos_y * y_new - dy"
+        ),
+        "probe": (
+            "import numpy as np\n"
+            "from mapping.grid import CELL_OCCUPIED, MapConfig\n"
+            "from mapping.rolling import Odometry2D, RollingMap\n"
+            "cfg = MapConfig(res=0.10, x_min=-3.0, x_max=3.0, y_min=-0.5, y_max=7.0)\n"
+            "rm = RollingMap(cfg=cfg, half_life_s=10.0)\n"
+            "rm.score_occ[45, 30] = 5.0\n"
+            "rm.update({'occupied': np.zeros_like(rm.score_occ)}, dt=0.0)\n"
+            "grid = rm.update({'occupied': np.zeros_like(rm.score_occ)}, "
+            "odometry=Odometry2D(dx=0.0, dy=1.0), dt=0.0)\n"
+            "print(np.argwhere(grid == CELL_OCCUPIED).tolist())\n"
+        ),
+        "test": "tests/test_rolling.py::test_m9_odometry_forward_shift_ten_rows",
+    },
+    {
+        "id": "M(f)",
+        "desc": "A* allows diagonal corner cutting",
+        "file": "planning/astar.py",
+        "old": "                if dr != 0 and dc != 0 and not self.allow_corner_cutting:",
+        "new": "                if False and dr != 0 and dc != 0 and not self.allow_corner_cutting:",
+        "probe": (
+            "import numpy as np\n"
+            "from mapping.grid import CELL_FREE, CELL_OCCUPIED, MapConfig\n"
+            "from planning.astar import astar_plan\n"
+            "from planning.costmap import build_costmap\n"
+            "cfg = MapConfig(res=1.0, x_min=0.0, x_max=4.0, y_min=0.0, y_max=4.0)\n"
+            "grid = np.full((4, 4), CELL_FREE, dtype=np.uint8)\n"
+            "grid[1, 2] = CELL_OCCUPIED\n"
+            "grid[2, 1] = CELL_OCCUPIED\n"
+            "cm = build_costmap(grid, cfg=cfg, user_half_width_m=0.0, safety_margin_m=0.0)\n"
+            "res = astar_plan(cm, (1, 1), (2, 2), allow_corner_cutting=False)\n"
+            "steps = list(zip(res.path[:-1], res.path[1:]))\n"
+            "print(((1, 1), (2, 2)) in steps, len(res.path))\n"
+        ),
+        "test": "tests/test_astar.py::test_m5_no_diagonal_corner_cutting",
+    },
+    {
+        "id": "M(g)",
+        "desc": "Explore picks nearest instead of farthest",
+        "file": "planning/targets.py",
+        "old": "    order = np.lexsort((abs_wx, -dists))",
+        "new": "    order = np.lexsort((abs_wx, dists))",
+        "probe": (
+            "import numpy as np\n"
+            "from mapping.grid import CELL_FREE, CELL_OCCUPIED, MapConfig, cell_to_world, world_to_cell\n"
+            "from planning.costmap import build_costmap\n"
+            "from planning.targets import find_explore_target\n"
+            "cfg = MapConfig(res=0.10, x_min=-3.0, x_max=3.0, y_min=0.0, y_max=6.0)\n"
+            "grid = np.full((cfg.n_rows, cfg.n_cols), CELL_OCCUPIED, dtype=np.uint8)\n"
+            "start_c, start_r = world_to_cell(0.0, 0.5, cfg)\n"
+            "for r in range(start_r, cfg.n_rows):\n"
+            "    for c in range(start_c - 15, start_c + 16):\n"
+            "        grid[r, c] = CELL_FREE\n"
+            "cm = build_costmap(grid, cfg=cfg, user_half_width_m=0.0, safety_margin_m=0.0)\n"
+            "t = find_explore_target(cm, (start_c, start_r), cone_deg=60.0, min_dist_m=1.5)\n"
+            "print(cell_to_world(t[0], t[1], cfg)[1])\n"
+        ),
+        "test": "tests/test_targets.py::test_m6_farthest_frontier_choice_and_tie_breaking",
+    },
+    {
+        "id": "M(h)",
+        "desc": "Smoothing collision fallback disabled",
+        "file": "planning/smooth.py",
+        "old": "        if _segment_collides(smoothed_list[i], smoothed_list[i + 1], costmap, step_m):",
+        "new": "        if False and _segment_collides(smoothed_list[i], smoothed_list[i + 1], costmap, step_m):",
+        "probe": (
+            "import numpy as np\n"
+            "from mapping.grid import CELL_FREE, CELL_OCCUPIED, MapConfig\n"
+            "from planning.costmap import build_costmap\n"
+            "from planning.smooth import smooth_path\n"
+            "cfg = MapConfig(res=0.10, x_min=0.0, x_max=5.0, y_min=0.0, y_max=5.0)\n"
+            "grid = np.full((cfg.n_rows, cfg.n_cols), CELL_FREE, dtype=np.uint8)\n"
+            "for r in range(cfg.n_rows):\n"
+            "    for c in range(cfg.n_cols):\n"
+            "        wx = c * 0.10\n"
+            "        wy = r * 0.10\n"
+            "        if 0.5 <= wx <= 2.5 and 0.5 <= wy <= 2.5:\n"
+            "            grid[r, c] = CELL_OCCUPIED\n"
+            "cm = build_costmap(grid, cfg=cfg, user_half_width_m=0.0, safety_margin_m=0.0)\n"
+            "raw = [(0.2, 0.2), (0.2, 1.5), (0.2, 3.0), (1.5, 3.0), (3.0, 3.0)]\n"
+            "print(smooth_path(raw, cm, iterations=5, weight_smooth=0.6)[1])\n"
+        ),
+        "test": "tests/test_smooth.py::test_m7_collision_fallback_fires_on_constructed_case",
+    },
+    {
+        "id": "M(i)",
+        "desc": "Free votes override occupied votes",
+        "file": "mapping/bev.py",
+        "old": "    has_free = (~has_occ) & (free_votes >= cfg.min_points_per_cell)",
+        "new": "    has_free = free_votes >= cfg.min_points_per_cell",
+        "probe": (
+            "import numpy as np\n"
+            "from core.config import MASK_FLOOR, MASK_OBSTACLE\n"
+            "from mapping.bev import build_bev\n"
+            "from mapping.grid import MapConfig\n"
+            "pts = np.vstack([np.tile([0.05, 1.55, 0.0], (10, 1)), "
+            "np.tile([0.05, 1.55, 0.5], (2, 1))])\n"
+            "labels = np.array([MASK_FLOOR] * 10 + [MASK_OBSTACLE] * 2)\n"
+            "cert = np.array([True] * 10 + [False] * 2)\n"
+            "bev = build_bev(pts, labels, certified_final=cert, cfg=MapConfig())\n"
+            "print(int(bev.grid[20, 30]))\n"
+        ),
+        "test": "tests/test_bev.py::test_m2_cell_with_both_floor_and_obstacle_is_occupied",
+    },
+]
+
+
 def _copy_repo(destination: Path) -> None:
     """Copy the working tree without VCS, virtualenv, media or secret files."""
     ignore = shutil.ignore_patterns(
@@ -808,11 +1033,13 @@ def _pytest(workdir: Path, nodes: list[str]) -> subprocess.CompletedProcess:
     )
 
 
-def run_source_level_controls() -> tuple[bool, list[tuple[str, str, str, str]]]:
+def run_source_level_controls(
+    controls: list[dict[str, Any]],
+) -> tuple[bool, list[tuple[str, str, str, str]]]:
     """Apply source mutations to isolated copies; assert each is effective and caught."""
     rows: list[tuple[str, str, str, str]] = []
     all_caught = True
-    nodes = sorted({control["test"] for control in SOURCE_CONTROLS})
+    nodes = sorted({control["test"] for control in controls})
 
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -826,7 +1053,7 @@ def run_source_level_controls() -> tuple[bool, list[tuple[str, str, str, str]]]:
             print(pre.stderr)
             return False, [("PRE-RUN", "isolated copy", "n/a", "ERROR")]
 
-        for index, control in enumerate(SOURCE_CONTROLS):
+        for index, control in enumerate(controls):
             work = root / f"control_{index}"
             shutil.copytree(
                 base,
@@ -864,10 +1091,19 @@ def run_source_level_controls() -> tuple[bool, list[tuple[str, str, str, str]]]:
     return all_caught, rows
 
 
+def _print_source_control_table(rows: list[tuple[str, str, str, str]]) -> None:
+    print(f"{'Control':<7} | {'Mutation':<48} | {'Probe':<5} | {'Caught':<6} | Status")
+    print("-" * 90)
+    for control_id, desc, probe_changed, caught in rows:
+        status_str = "YES" if probe_changed == "YES" and caught == "YES" else "NO"
+        print(f"{control_id:<7} | {desc:<48} | {probe_changed:<5} | {caught:<6} | {status_str}")
+    print("=" * 90)
+
+
 def main() -> int:
     """Run all negative controls and print verification tables."""
     print("=" * 80)
-    print("NEGATIVE CONTROLS VERIFICATION (GEOMETRY MODULE + DATASET/EVAL)")
+    print("NEGATIVE CONTROLS VERIFICATION (GEOMETRY + DATASET/EVAL + MAPPING/PLANNING)")
     print("=" * 80)
 
     controls = [
@@ -911,23 +1147,29 @@ def main() -> int:
     print("\nSOURCE-LEVEL PERCEPTION MUTATIONS (isolated temporary package copies)")
     print("=" * 90)
     try:
-        source_passed, source_rows = run_source_level_controls()
+        source_passed, source_rows = run_source_level_controls(SOURCE_CONTROLS)
     except NoOpMutationError as exc:
         print(str(exc))
         return 3
-    print(f"{'Control':<7} | {'Mutation':<48} | {'Probe':<5} | {'Caught':<6} | Status")
-    print("-" * 90)
-    for control_id, desc, probe_changed, caught in source_rows:
-        status_str = "YES" if probe_changed == "YES" and caught == "YES" else "NO"
-        print(f"{control_id:<7} | {desc:<48} | {probe_changed:<5} | {caught:<6} | {status_str}")
+    _print_source_control_table(source_rows)
+
+    print("\nSOURCE-LEVEL MAPPING/PLANNING MUTATIONS (isolated temporary package copies)")
     print("=" * 90)
+    try:
+        mapping_passed, mapping_rows = run_source_level_controls(MAP_PLANNING_CONTROLS)
+    except NoOpMutationError as exc:
+        print(str(exc))
+        return 3
+    _print_source_control_table(mapping_rows)
 
     total_bugs = len(controls)
     total_source = len(SOURCE_CONTROLS)
-    if all_passed and source_passed:
+    total_mapping = len(MAP_PLANNING_CONTROLS)
+    if all_passed and source_passed and mapping_passed:
         print(
-            f"ALL {total_bugs} ORIGINAL BUGS AND {total_source} SOURCE-LEVEL "
-            "PERCEPTION MUTATIONS CAUGHT."
+            f"ALL {total_bugs} ORIGINAL BUGS, {total_source} SOURCE-LEVEL "
+            f"PERCEPTION MUTATIONS AND {total_mapping} SOURCE-LEVEL "
+            "MAPPING/PLANNING MUTATIONS CAUGHT."
         )
         return 0
     else:

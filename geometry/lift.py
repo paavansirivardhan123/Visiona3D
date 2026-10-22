@@ -59,6 +59,7 @@ class LiftResult:
     plane_fit: PlaneFit
     scale_result: ScaleResult
     scaled_depth: np.ndarray
+    point_map_g: Optional[np.ndarray] = None
 
 
 def lift_frame(
@@ -134,12 +135,18 @@ def lift_frame(
         points_c_dict[label] = scaled_points_c[mask]
         points_g_dict[label] = scaled_points_g[mask]
 
+    # 8. Per-pixel G-frame point map, float32 (H, W, 3), NaN where invalid
+    invalid_depth = ~np.isfinite(scaled_depth) | (scaled_depth <= 0.0)
+    point_map_g = scaled_points_g.astype(np.float32)
+    point_map_g[invalid_depth] = np.nan
+
     return LiftResult(
         points_c=points_c_dict,
         points_g=points_g_dict,
         plane_fit=plane_fit,
         scale_result=scale_result,
         scaled_depth=scaled_depth,
+        point_map_g=point_map_g,
     )
 
 

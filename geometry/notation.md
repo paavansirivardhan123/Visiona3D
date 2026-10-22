@@ -167,3 +167,51 @@ and evaluation record.
 - **Safety rule:** an unknown or unmapped class label can never map to floor.
   Unknown names map to other (4); sky maps to other in the label map and is
   carried separately by the sky mask.
+
+---
+
+## Map Conventions
+
+### Coordinate Frames and Discretization
+- Grid in Ground frame G.
+  - `col = floor((X - x_min) / res)`
+  - `row = floor((Y - y_min) / res)`
+  - `row` grows strictly with forward distance `Y`.
+- Standard defaults:
+  - Resolution: `res = 0.10` m (TO TUNE ON REAL DATA)
+  - Horizontal range: `X` in `[-3.0, 3.0]` m (width 6.0 m, 60 cols)
+  - Forward range: `Y` in `[-0.5, 7.0]` m (length 7.5 m, 75 rows)
+
+### Cell State Codes
+Cell state codes are distinct from semantic mask class indices:
+- `CELL_UNKNOWN = 0`: unobserved / no evidence.
+- `CELL_FREE = 1`: certified walkable floor space.
+- `CELL_OCCUPIED = 2`: obstacle or vetoed floor.
+- `CELL_UNCERTAIN = 3`: floor-labelled by semantics but not certified or vetoed.
+
+### Obstacle Height Band
+Points with height $Z$ in $[0.15, 2.0]$ m above the fitted floor plane that are not certified floor cast OCCUPIED votes. This catches overhangs (tables, counters, branches).
+
+**Worked Example 7: Grid Coordinate Conversions and State Codes**
+
+```python
+>>> from mapping.grid import (
+...     MapConfig,
+...     world_to_cell,
+...     cell_to_world,
+...     CELL_UNKNOWN,
+...     CELL_FREE,
+...     CELL_OCCUPIED,
+...     CELL_UNCERTAIN,
+... )
+>>> cfg = MapConfig(res=0.10, x_min=-3.0, x_max=3.0, y_min=-0.5, y_max=7.0)
+>>> col, row = world_to_cell(0.0, 1.5, cfg)
+>>> col, row
+(30, 20)
+>>> wx, wy = cell_to_world(col, row, cfg)
+>>> bool(np.isclose(wx, 0.05) and np.isclose(wy, 1.55))
+True
+>>> (CELL_UNKNOWN, CELL_FREE, CELL_OCCUPIED, CELL_UNCERTAIN)
+(0, 1, 2, 3)
+
+```

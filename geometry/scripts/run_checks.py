@@ -1,8 +1,9 @@
 """Master validation script for Visiona3D Geometry Module.
 
-Executes the full test suite via pytest on geometry/tests, evaluates
-quantitative numerical metrics for T1-T10, prints a summary table,
-and writes the final report to geometry/reports/geometry_report.json.
+Executes the full test suite via pytest on tests/, evaluates quantitative
+numerical metrics for T1-T10, P1-P13 and M1-M13 (mapping & planning),
+prints a summary table, and writes the final report to
+geometry/reports/geometry_report.json.
 """
 
 from __future__ import annotations
@@ -386,6 +387,19 @@ PERCEPTION_TEST_FILES = (
     "tests/test_lazy_imports.py",
 )
 
+MAPPING_PLANNING_TEST_FILES = (
+    "tests/test_grid.py",
+    "tests/test_bev.py",
+    "tests/test_costmap.py",
+    "tests/test_astar.py",
+    "tests/test_targets.py",
+    "tests/test_smooth.py",
+    "tests/test_rolling.py",
+    "tests/test_guidance.py",
+    "tests/test_planner_e2e.py",
+    "tests/test_plan_demo.py",
+)
+
 
 def build_perception_results(
     node_status: dict[str, str],
@@ -436,9 +450,282 @@ def build_perception_results(
     return results
 
 
+def measure_m8_details() -> dict:
+    """Direct M8 measurement: pessimistic-layer true-clearance gain on the wall scene."""
+    from calibration.conformal_depth import ConformalDepth
+    from mapping.bev import build_bev
+    from mapping.grid import MapConfig, world_to_cell
+    from planning.astar import astar_plan
+    from planning.costmap import build_costmap
+    from planning.targets import find_explore_target
+
+    K = Intrinsics.from_fov(width=320, height=240, hfov_deg=75.0)
+    h, pitch, wall_y = 1.4, 15.0, 4.0
+    depth, floor_mask, wall_mask, _, _ = render_scene(K, 240, 320, h, pitch, wall_distance=wall_y)
+    theta = math.radians(pitch)
+    n = np.array([0.0, math.cos(theta), math.sin(theta)], dtype=np.float64)
+    pts_g = camera_to_ground(backproject(depth, K), n, h)
+
+    cdepth = ConformalDepth(alpha=0.10, score="overestimation")
+    fake_gt = np.linspace(1.0, 6.0, 100)
+    cdepth.fit(fake_gt * 1.25, fake_gt)
+    lower_depth = cdepth.predict(depth.reshape(-1)).lower.reshape(depth.shape)
+    lower_pts_g = camera_to_ground(backproject(lower_depth, K), n, h)
+
+    labels = np.zeros((240, 320), dtype=np.int64)
+    labels[floor_mask] = 1
+    labels[wall_mask] = 2
+
+    cfg = MapConfig(res=0.10, y_min=0.0, y_max=6.0)
+    bev_nom = build_bev(pts_g, labels, certified_final=floor_mask, cfg=cfg)
+    bev_pess = build_bev(
+        pts_g, labels, certified_final=floor_mask, pessimistic_pointmap=lower_pts_g, cfg=cfg
+    )
+
+    start = world_to_cell(0.0, 1.8, cfg)
+    max_y: dict[str, float] = {}
+    for name, bev in (("nominal", bev_nom), ("pessimistic", bev_pess)):
+        cm = build_costmap(bev.grid, cfg=cfg)
+        target = find_explore_target(cm, start)
+        if target is None:
+            max_y[name] = float("nan")
+            continue
+        res = astar_plan(cm, start, target)
+        max_y[name] = max((wy for _, wy in res.path_world), default=float("nan"))
+
+    gain = (wall_y - max_y["pessimistic"]) - (wall_y - max_y["nominal"])
+    passed = abs(gain - 0.80) <= 0.06
+    return {
+        "passed": passed,
+        "measured": (
+            f"nominal Y={max_y['nominal']:.2f}, pess Y={max_y['pessimistic']:.2f}, "
+            f"gain={gain:.2f} m"
+        ),
+        "details": {
+            "nominal_max_y_m": max_y["nominal"],
+            "pessimistic_max_y_m": max_y["pessimistic"],
+            "clearance_gain_m": gain,
+            "wall_y_m": wall_y,
+        },
+    }
+
+
+def measure_m11_details() -> dict:
+    """Direct M11 measurements: wall-as-floor veto safety and the glass patch."""
+    from calibration.geometric_veto import veto_floor_mask
+    from mapping.bev import build_bev
+    from mapping.grid import CELL_FREE, CELL_UNKNOWN, MapConfig, world_to_cell
+    from planning.astar import astar_plan
+    from planning.costmap import build_costmap
+    from planning.targets import find_explore_target
+    from scripts.run_planner_eval import check_path_collision_analytic
+
+    K = Intrinsics.from_fov(width=320, height=240, hfov_deg=75.0)
+    h, pitch, wall_y = 1.4, 15.0, 4.0
+    map_cfg = MapConfig()
+    theta = math.radians(pitch)
+    n = np.array([0.0, math.cos(theta), math.sin(theta)], dtype=np.float64)
+    depth, floor_mask, wall_mask, _, _ = render_scene(K, 240, 320, h, pitch, wall_distance=wall_y)
+    pts_g = camera_to_ground(backproject(depth, K), n, h)
+    start = world_to_cell(0.0, 1.8, map_cfg)
+
+    labels = np.zeros((240, 320), dtype=np.int64)
+    labels[floor_mask] = 1
+    labels[wall_mask] = 2
+
+    wall_px = np.argwhere(labels == 2)
+    rng = np.random.default_rng(42)
+    n_corrupt = int(0.30 * len(wall_px))
+    idx = rng.choice(len(wall_px), size=n_corrupt, replace=False)
+    corrupted = labels.copy()
+    for py, px in wall_px[idx]:
+        corrupted[py, px] = 1
+
+    certified, vetoed = veto_floor_mask(corrupted == 1, pts_g, tau0_m=0.10, tau1=0.02)
+
+    unsafe: dict[str, float] = {}
+    stop_y: dict[str, float] = {}
+    for name, cert, veto in (("naive", corrupted == 1, None), ("vetoed", certified, vetoed)):
+        bev = build_bev(pts_g, corrupted, certified_final=cert, vetoed=veto, cfg=map_cfg)
+        cm = build_costmap(bev.grid, cfg=map_cfg, user_half_width_m=0.35, safety_margin_m=0.10)
+        target = find_explore_target(cm, start, min_dist_m=1.0)
+        path_world: list[tuple[float, float]] = []
+        if target is not None:
+            res = astar_plan(cm, start, target)
+            if res.status == "OK":
+                path_world = res.path_world
+        unsafe[name] = 1.0 if check_path_collision_analytic(path_world, wall_y, [], user_half_width_m=0.35) else 0.0
+        stop_y[name] = max((wy for _, wy in path_world), default=float("nan"))
+
+    glass_px = wall_mask & (np.abs(pts_g[:, :, 0]) <= 1.0) & (pts_g[:, :, 2] <= 1.8)
+    see_through = depth.copy()
+    see_through[glass_px] = 8.0
+    pts_glass = camera_to_ground(backproject(see_through, K), n, h)
+    glass_labels = labels.copy()
+    glass_labels[glass_px] = 1
+    bev_glass = build_bev(pts_glass, glass_labels, certified_final=(glass_labels == 1), cfg=map_cfg)
+    glass_rows, glass_cols = np.nonzero(
+        (np.arange(map_cfg.n_rows)[:, None] * map_cfg.res + map_cfg.y_min >= wall_y)
+        & (np.abs(np.arange(map_cfg.n_cols)[None, :] * map_cfg.res + map_cfg.x_min) <= 1.05)
+    )
+    footprint = bev_glass.grid[glass_rows, glass_cols]
+    n_free_glass = int((footprint == CELL_FREE).sum())
+    n_unknown_glass = int((footprint == CELL_UNKNOWN).sum())
+
+    passed = unsafe["vetoed"] == 0.0 and n_free_glass == 0
+    return {
+        "passed": passed,
+        "measured": (
+            f"veto unsafe={unsafe['vetoed']:.0%}, naive={unsafe['naive']:.0%} (this scene); "
+            f"glass FREE={n_free_glass}/{len(glass_rows)} UNKNOWN={n_unknown_glass}"
+        ),
+        "details": {
+            "unsafe_naive": unsafe["naive"],
+            "unsafe_vetoed": unsafe["vetoed"],
+            "stop_y_vetoed_m": stop_y["vetoed"],
+            "glass_pixels": int(glass_px.sum()),
+            "glass_footprint_cells": int(len(glass_rows)),
+            "glass_footprint_free": n_free_glass,
+            "glass_footprint_unknown": n_unknown_glass,
+        },
+    }
+
+
+def measure_m12_details() -> dict:
+    """Direct M12 measurement: full 200-scene synthetic ablation (SYNTHETIC ONLY)."""
+    from scripts.run_planner_eval import run_synthetic_ablation
+
+    res = run_synthetic_ablation(
+        n_scenes=200,
+        base_seed=42,
+        out_dir=str(REPO_ROOT / "reports" / "planner_eval"),
+    )
+    variants = res["variants"]
+    rate = {name: data["unsafe_rate_corrupted_scenes"] for name, data in variants.items()}
+    elapsed = float(res["metadata"]["total_elapsed_s"])
+
+    passed = (
+        rate["C_geometric_veto"] <= rate["A_naive"]
+        and rate["D_conformal_margin"] <= rate["A_naive"]
+        and elapsed < 60.0
+    )
+    return {
+        "passed": passed,
+        "measured": (
+            f"corr unsafe A={rate['A_naive']:.1%} B={rate['B_conformal_floor']:.1%} "
+            f"C={rate['C_geometric_veto']:.1%} D={rate['D_conformal_margin']:.1%}; "
+            f"{elapsed:.1f} s"
+        ),
+        "details": {
+            "unsafe_rate_corrupted": rate,
+            "unsafe_rate": {name: data["unsafe_rate"] for name, data in variants.items()},
+            "availability": {name: data["availability"] for name, data in variants.items()},
+            "mean_min_clearance_m": {
+                name: data["mean_min_clearance_m"] for name, data in variants.items()
+            },
+            "latency_p50_ms": {name: data["latency_p50_ms"] for name, data in variants.items()},
+            "elapsed_s": elapsed,
+        },
+    }
+
+
+def measure_m13_details(mapping_seconds: float, suite_seconds: float) -> dict:
+    """Direct M13 measurement: planner latency p50 on the 70 x 75 grid."""
+    from mapping.grid import CELL_FREE, CELL_OCCUPIED, MapConfig
+    from planning.astar import astar_plan
+    from planning.costmap import build_costmap
+
+    cfg = MapConfig(res=0.10, x_min=-3.5, x_max=3.5, y_min=-0.5, y_max=7.0)
+    grid = np.full((75, 70), CELL_FREE, dtype=np.uint8)
+    rng = np.random.default_rng(999)
+    for _ in range(8):
+        ox = rng.integers(10, 60)
+        oy = rng.integers(10, 65)
+        grid[oy : oy + 4, ox : ox + 4] = CELL_OCCUPIED
+
+    costmap = build_costmap(grid, cfg=cfg, user_half_width_m=0.35, safety_margin_m=0.10)
+    start, goal = (35, 10), (35, 65)
+
+    latencies_ms: list[float] = []
+    res = None
+    for _ in range(15):
+        t0 = time.perf_counter()
+        res = astar_plan(costmap, start, goal)
+        latencies_ms.append((time.perf_counter() - t0) * 1000.0)
+    p50_ms = float(np.median(latencies_ms))
+
+    passed = p50_ms < 50.0 and mapping_seconds < 60.0 and res is not None and res.status == "OK"
+    return {
+        "passed": passed,
+        "measured": (
+            f"p50={p50_ms:.1f} ms; new tests {mapping_seconds:.1f} s; "
+            f"suite {suite_seconds:.1f} s (target 150 s)"
+        ),
+        "details": {
+            "latency_p50_ms": p50_ms,
+            "latency_max_ms": float(np.max(latencies_ms)),
+            "new_tests_seconds": mapping_seconds,
+            "full_suite_seconds": suite_seconds,
+            "full_suite_target_seconds": 150.0,
+            "full_suite_over_target": suite_seconds >= 150.0,
+        },
+    }
+
+
+def build_mapping_planning_results(
+    node_status: dict[str, str],
+    suite_seconds: float,
+    mapping_seconds: float,
+) -> list[dict]:
+    """Build M1-M13 rows from the full-suite run, the new-test timing and measurements."""
+    m8 = measure_m8_details()
+    m11 = measure_m11_details()
+    m12 = measure_m12_details()
+    m13 = measure_m13_details(mapping_seconds, suite_seconds)
+    checks = [
+        ("M1", "grid defs & conversions", "tests/test_grid.py::test_m1_", "hand-computed cells; round-trip exact"),
+        ("M2", "BEV occupancy from scenes", "tests/test_bev.py::test_m2_", "floor FREE; wall/box/overhang OCCUPIED"),
+        ("M3", "certified-only planning", "tests/test_astar.py::test_m3_", "UNKNOWN/UNCERTAIN never traversed"),
+        ("M4", "inflation + chamfer", "tests/test_costmap.py::test_m4_", "corridor hand-verified; chamfer exact"),
+        ("M5", "A* planner + statuses", "tests/test_astar.py::test_m5_", "octile exact; no corner cutting"),
+        ("M6", "target selection", "tests/test_targets.py::test_m6_", "farthest frontier; tie by centreline"),
+        ("M7", "smoothing + fallback", "tests/test_smooth.py::test_m7_", "fallback fires; no collisions"),
+        ("M8", "conformal pessimistic margin", "tests/test_guidance.py::test_m8_", "wall 3.2 m; clearance gain 0.80 m"),
+        ("M9", "rolling map + odometry", "tests/test_rolling.py::test_m9_", "10-row shift; rotation; decay"),
+        ("M10", "guidance decisions", "tests/test_guidance.py::test_m10_", "GUIDE/CAUTION/STOP + reasons"),
+        ("M11", "e2e safety invariants", "tests/test_planner_e2e.py::test_m11_", "veto unsafe 0%; glass not FREE; no raise"),
+        ("M12", "ablation + CLI scripts", "tests/test_plan_demo.py::test_m12_", "C,D <= A; demo exit 0; weights exit 2"),
+        ("M13", "latency + determinism", "tests/test_plan_demo.py::test_m13_", "p50 < 50 ms; identical; new < 60 s"),
+    ]
+    measurements = {"M8": m8, "M11": m11, "M12": m12, "M13": m13}
+    results = []
+    for check_id, name, prefix, target in checks:
+        passed, count = _node_check(prefix, node_status)
+        measured = f"{count} test(s) passed"
+        details: dict = {"tests_passed": count}
+        if check_id in measurements:
+            measurement = measurements[check_id]
+            passed = passed and measurement["passed"]
+            measured = measurement["measured"]
+            details.update(measurement["details"])
+        if check_id == "M13":
+            details["new_test_files"] = list(MAPPING_PLANNING_TEST_FILES)
+        results.append(
+            {
+                "id": check_id,
+                "name": name,
+                "measured": measured,
+                "target": target,
+                "passed": bool(passed and count > 0),
+                "details": details,
+            }
+        )
+    return results
+
+
 def main() -> int:
     print("=" * 85)
-    print("VISIONA3D: GEOMETRY + PERCEPTION VERIFICATION SUITE")
+    print("VISIONA3D: GEOMETRY + PERCEPTION + MAPPING/PLANNING VERIFICATION SUITE")
     print("=" * 85)
     print(f"Timestamp:       {datetime.datetime.now().isoformat()}")
     print(f"Python Version:  {platform.python_version()}")
@@ -447,8 +734,8 @@ def main() -> int:
     print(f"Platform:        {platform.platform()}")
     print("-" * 85)
 
-    # 1. Run the full pytest suite once (geometry + perception + audio-adjacent tests)
-    print("\n[Step 1/2] Running full pytest test suite on tests/...")
+    # 1. Run the full pytest suite once (geometry + perception + mapping/planning + audio-adjacent tests)
+    print("\n[Step 1/4] Running full pytest test suite on tests/...")
     pytest_cmd = [sys.executable, "-m", "pytest", "tests", "-v"]
     suite_start = time.perf_counter()
     proc = subprocess.run(pytest_cmd, cwd=str(REPO_ROOT), capture_output=True, text=True)
@@ -461,7 +748,7 @@ def main() -> int:
     node_status = _parse_pytest_nodes(proc.stdout)
 
     # 2. Time only the new perception tests (P13 gate; independent of suite runtime)
-    print("\n[Step 2/3] Timing new perception tests...")
+    print("\n[Step 2/4] Timing new perception tests...")
     perception_cmd = [
         sys.executable,
         "-m",
@@ -483,8 +770,31 @@ def main() -> int:
         return perception_proc.returncode
     print(f"New perception tests: {perception_seconds:.2f} s")
 
-    # 3. Collect numerical measurements for T1-T10 and P1-P13
-    print("[Step 3/3] Measuring quantitative requirements T1-T10 + P1-P13...")
+    # 3. Time only the new mapping/planning tests (M13 gate; independent of suite runtime)
+    print("\n[Step 3/4] Timing new mapping/planning tests...")
+    mapping_cmd = [
+        sys.executable,
+        "-m",
+        "pytest",
+        *MAPPING_PLANNING_TEST_FILES,
+        "-q",
+        "-p",
+        "no:cacheprovider",
+    ]
+    mapping_start = time.perf_counter()
+    mapping_proc = subprocess.run(
+        mapping_cmd, cwd=str(REPO_ROOT), capture_output=True, text=True
+    )
+    mapping_seconds = time.perf_counter() - mapping_start
+    print(mapping_proc.stdout)
+    if mapping_proc.returncode != 0:
+        print(mapping_proc.stderr)
+        print("FAIL: new mapping/planning tests returned non-zero exit code!")
+        return mapping_proc.returncode
+    print(f"New mapping/planning tests: {mapping_seconds:.2f} s")
+
+    # 4. Collect numerical measurements for T1-T10, P1-P13 and M1-M13
+    print("[Step 4/4] Measuring quantitative requirements T1-T10 + P1-P13 + M1-M13...")
     testers = [
         measure_t1,
         measure_t2,
@@ -502,20 +812,23 @@ def main() -> int:
     results.extend(
         build_perception_results(node_status, suite_seconds, perception_seconds)
     )
+    results.extend(
+        build_mapping_planning_results(node_status, suite_seconds, mapping_seconds)
+    )
 
-    print("\n" + "=" * 125)
-    print(f"{'Test':<5} | {'Name':<34} | {'Measured Value':<58} | {'Target':<30} | {'Status':<6}")
-    print("-" * 125)
+    print("\n" + "=" * 174)
+    print(f"{'Test':<5} | {'Name':<34} | {'Measured Value':<75} | {'Target':<42} | {'Status':<6}")
+    print("-" * 174)
     all_passed = True
     for res in results:
         status_str = "PASS" if res["passed"] else "FAIL"
         measured = str(res["measured"])
-        if len(measured) > 58:
-            measured = measured[:57] + "~"
-        print(f"{res['id']:<5} | {res['name']:<34} | {measured:<58} | {res['target']:<30} | {status_str:<6}")
+        if len(measured) > 75:
+            measured = measured[:74] + "~"
+        print(f"{res['id']:<5} | {res['name']:<34} | {measured:<75} | {res['target']:<42} | {status_str:<6}")
         if not res["passed"]:
             all_passed = False
-    print("=" * 125)
+    print("=" * 174)
 
     # 3. Write report JSON
     reports_dir = REPO_ROOT / "geometry" / "reports"
@@ -538,7 +851,7 @@ def main() -> int:
     print(f"\nWrote geometry verification report to: {report_file}")
 
     if all_passed:
-        print("\nALL GEOMETRY + PERCEPTION CHECKS PASSED SUCCESSFULLY.")
+        print("\nALL GEOMETRY + PERCEPTION + MAPPING/PLANNING CHECKS PASSED SUCCESSFULLY.")
         return 0
     else:
         print("\nFAIL: One or more checks failed.")

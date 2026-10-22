@@ -53,6 +53,10 @@ class PerceptionPipeline:
         estimator: ScaleEstimator,
         rng: Optional[np.random.Generator] = None,
         ransac_cfg: Optional[RansacConfig] = None,
+        conformal_depth: Any | None = None,
+        floor_threshold: float | None = None,
+        tau0_m: float = 0.10,
+        tau1: float = 0.02,
     ) -> None:
         self.seg = seg
         self.depth = depth
@@ -62,17 +66,37 @@ class PerceptionPipeline:
         self.estimator = estimator
         self.rng = rng if rng is not None else np.random.default_rng(0)
         self.ransac_cfg = ransac_cfg
+        self.conformal_depth = conformal_depth
+        self.floor_threshold = floor_threshold
+        self.tau0_m = float(tau0_m)
+        self.tau1 = float(tau1)
 
-    def run(self, image_rgb: np.ndarray) -> FrameOutputs:
+    def run(
+        self,
+        image_rgb: np.ndarray,
+        *,
+        conformal_depth: Any | None = None,
+        floor_threshold: float | None = None,
+        tau0_m: float | None = None,
+        tau1: float | None = None,
+    ) -> FrameOutputs:
         """Run all stages. Never raises; failures become status codes."""
         timings: dict[str, float] = {}
         statuses: dict[str, str] = {}
         overall_start = time.perf_counter()
 
+        cdepth = conformal_depth if conformal_depth is not None else self.conformal_depth
+        fthresh = floor_threshold if floor_threshold is not None else self.floor_threshold
+        t0 = tau0_m if tau0_m is not None else self.tau0_m
+        t1 = tau1 if tau1 is not None else self.tau1
+
         seg_output: SegOutput | None = None
         depth_output: DepthOutput | None = None
         detections: list[Det2D] = []
         lift_result: LiftResult | None = None
+        certified_final: np.ndarray | None = None
+        vetoed: np.ndarray | None = None
+        pessimistic_pointmap_g: np.ndarray | None = None
 
         image = np.asarray(image_rgb)
         if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
@@ -193,6 +217,46 @@ class PerceptionPipeline:
                 )
                 statuses["lift"] = lift_result.plane_fit.status.value
                 statuses["scale"] = lift_result.scale_result.status
+
+                # Optional conformal floor certification, geometric veto, and pessimistic point map
+                if fthresh is not None:
+                    try:
+                        import math
+                        from calibration.conformal_floor import certified_floor
+                        from calibration.geometric_veto import veto_floor_mask
+                        from geometry.camera import backproject
+                        from geometry.frames import camera_to_ground
+
+                        if hasattr(seg_output, "probs") and seg_output.probs is not None:
+                            c_floor = certified_floor(seg_output.probs, fthresh)
+                        else:
+                            c_floor = labels == 1
+
+                        if lift_result.point_map_g is not None:
+                            certified_final, vetoed = veto_floor_mask(
+                                c_floor, lift_result.point_map_g, tau0_m=t0, tau1=t1
+                            )
+                        else:
+                            certified_final = c_floor
+                            vetoed = np.zeros_like(c_floor, dtype=bool)
+
+                        if cdepth is not None and getattr(cdepth, "_fitted", False):
+                            c_pred = cdepth.predict(depth_output.depth_m.reshape(-1))
+                            lower_depth = c_pred.lower.reshape(depth_output.depth_m.shape)
+                            s_scale = lift_result.scale_result.s
+                            scaled_lower_depth = lower_depth * s_scale
+                            lower_pts_c = backproject(scaled_lower_depth, self.K)
+                            if lift_result.plane_fit.status == FitStatus.OK:
+                                n_norm = lift_result.plane_fit.n
+                            else:
+                                p_rad = math.radians(self.mount.pitch_deg)
+                                n_norm = np.array([0.0, math.cos(p_rad), math.sin(p_rad)], dtype=np.float64)
+                            lower_pts_g = camera_to_ground(lower_pts_c, n_norm, self.mount.h_known)
+                            inv_lower = ~np.isfinite(scaled_lower_depth) | (scaled_lower_depth <= 0.0)
+                            pessimistic_pointmap_g = lower_pts_g.astype(np.float32)
+                            pessimistic_pointmap_g[inv_lower] = np.nan
+                    except Exception as c_exc:  # noqa: BLE001
+                        statuses["conformal"] = _error_code("conformal", c_exc)
         except Exception as exc:  # noqa: BLE001
             statuses["lift"] = _error_code("lift", exc)
         timings["lift"] = (time.perf_counter() - start) * 1000.0
@@ -206,6 +270,9 @@ class PerceptionPipeline:
             lift=lift_result,
             timings=timings,
             statuses=statuses,
+            certified_final=certified_final,
+            vetoed=vetoed,
+            pessimistic_pointmap_g=pessimistic_pointmap_g,
         )
 
     def reset(self) -> None:

@@ -1,0 +1,34 @@
+{
+  "decision": "GUIDE",
+  "heading_deg": 25.25316339457388,
+  "lookahead_point_g": [
+    1.25,
+    2.6500000000000004,
+    0.0
+  ],
+  "distance_to_turn_m": 0.2414213562373093,
+  "left_clearance_m": 0.0,
+  "right_clearance_m": 0.0,
+  "nearest_obstacle": {
+    "label": "obstacle",
+    "distance_nominal_m": 0.07071067811865461,
+    "distance_lower_m": 0.07071067811865461,
+    "bearing_deg": -135.0000000000001
+  },
+  "reasons": [
+    "Path certified and clear; guidance active"
+  ],
+  "abstain_features": {
+    "certified_floor_fraction": 0.6203292637809841,
+    "relative_interval_width": null,
+    "plane_inlier_ratio": 1.0,
+    "plane_status": "OK",
+    "scale_status": "OK",
+    "veto_fraction": 0.0,
+    "corridor_points": 43248,
+    "floor_labelled_points": 0
+  },
+  "timings": {
+    "total_ms": 6.0889997985213995
+  }
+}

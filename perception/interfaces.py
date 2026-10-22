@@ -216,6 +216,9 @@ class FrameOutputs:
     lift: Any | None
     timings: dict[str, float] = field(default_factory=dict)
     statuses: dict[str, str] = field(default_factory=dict)
+    certified_final: np.ndarray | None = None
+    vetoed: np.ndarray | None = None
+    pessimistic_pointmap_g: np.ndarray | None = None
 
     def validate(self) -> list[str]:
         """Return contract violations for the frame container."""

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-21T12:57:33.450743",
+  "timestamp": "2026-10-22T23:33:50.733652",
   "status": "PASSED",
   "software_versions": {
     "python": "3.11.14",
@@ -105,23 +105,23 @@
     {
       "id": "T9",
       "name": "notation.md doctest execution",
-      "measured": "attempted=42, failures=0",
+      "measured": "attempted=49, failures=0",
       "target": ">=3 attempted, 0 failures",
       "passed": true,
       "details": {
-        "attempted": 42,
+        "attempted": 49,
         "failures": 0
       }
     },
     {
       "id": "T10",
       "name": "determinism & reproducibility",
-      "measured": "bit_identical=True, runtime=0.51 s",
+      "measured": "bit_identical=True, runtime=1.11 s",
       "target": "bit-identical & < 60 s",
       "passed": true,
       "details": {
         "bit_identical": true,
-        "runtime_seconds": 0.5120281002018601
+        "runtime_seconds": 1.111633500084281
       }
     },
     {
@@ -132,7 +132,7 @@
       "passed": true,
       "details": {
         "tests_passed": 7,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -143,7 +143,7 @@
       "passed": true,
       "details": {
         "tests_passed": 5,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -154,7 +154,7 @@
       "passed": true,
       "details": {
         "tests_passed": 3,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -165,7 +165,7 @@
       "passed": true,
       "details": {
         "tests_passed": 3,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -176,7 +176,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -187,7 +187,7 @@
       "passed": true,
       "details": {
         "tests_passed": 5,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -198,7 +198,7 @@
       "passed": true,
       "details": {
         "tests_passed": 10,
-        "suite_seconds": 45.845120599959046,
+        "suite_seconds": 114.90076470002532,
         "perfect_wall_error": 1.3361289852298341e-09,
         "absrel": {
           "0.6": 3.380904672889068e-08,
@@ -217,7 +217,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -228,7 +228,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -239,7 +239,7 @@
       "passed": true,
       "details": {
         "tests_passed": 2,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -250,7 +250,7 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
@@ -261,19 +261,19 @@
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 45.845120599959046
+        "suite_seconds": 114.90076470002532
       }
     },
     {
       "id": "P13",
       "name": "speed + determinism",
-      "measured": "identical repeats; perception 10.2s",
+      "measured": "identical repeats; perception 9.3s",
       "target": "identical repeats; perception tests < 30 s",
       "passed": true,
       "details": {
         "tests_passed": 1,
-        "suite_seconds": 45.845120599959046,
-        "perception_seconds": 10.194346900098026,
+        "suite_seconds": 114.90076470002532,
+        "perception_seconds": 9.319009999977425,
         "perception_files": [
           "tests/test_interfaces.py",
           "tests/test_class_map.py",
@@ -283,6 +283,196 @@
           "tests/test_calibrate_camera.py",
           "tests/test_fetch_models.py",
           "tests/test_lazy_imports.py"
+        ]
+      }
+    },
+    {
+      "id": "M1",
+      "name": "grid defs & conversions",
+      "measured": "3 test(s) passed",
+      "target": "hand-computed cells; round-trip exact",
+      "passed": true,
+      "details": {
+        "tests_passed": 3
+      }
+    },
+    {
+      "id": "M2",
+      "name": "BEV occupancy from scenes",
+      "measured": "5 test(s) passed",
+      "target": "floor FREE; wall/box/overhang OCCUPIED",
+      "passed": true,
+      "details": {
+        "tests_passed": 5
+      }
+    },
+    {
+      "id": "M3",
+      "name": "certified-only planning",
+      "measured": "1 test(s) passed",
+      "target": "UNKNOWN/UNCERTAIN never traversed",
+      "passed": true,
+      "details": {
+        "tests_passed": 1
+      }
+    },
+    {
+      "id": "M4",
+      "name": "inflation + chamfer",
+      "measured": "2 test(s) passed",
+      "target": "corridor hand-verified; chamfer exact",
+      "passed": true,
+      "details": {
+        "tests_passed": 2
+      }
+    },
+    {
+      "id": "M5",
+      "name": "A* planner + statuses",
+      "measured": "6 test(s) passed",
+      "target": "octile exact; no corner cutting",
+      "passed": true,
+      "details": {
+        "tests_passed": 6
+      }
+    },
+    {
+      "id": "M6",
+      "name": "target selection",
+      "measured": "4 test(s) passed",
+      "target": "farthest frontier; tie by centreline",
+      "passed": true,
+      "details": {
+        "tests_passed": 4
+      }
+    },
+    {
+      "id": "M7",
+      "name": "smoothing + fallback",
+      "measured": "2 test(s) passed",
+      "target": "fallback fires; no collisions",
+      "passed": true,
+      "details": {
+        "tests_passed": 2
+      }
+    },
+    {
+      "id": "M8",
+      "name": "conformal pessimistic margin",
+      "measured": "nominal Y=3.55, pess Y=2.75, gain=0.80 m",
+      "target": "wall 3.2 m; clearance gain 0.80 m",
+      "passed": true,
+      "details": {
+        "tests_passed": 2,
+        "nominal_max_y_m": 3.5500000000000003,
+        "pessimistic_max_y_m": 2.75,
+        "clearance_gain_m": 0.8000000000000003,
+        "wall_y_m": 4.0
+      }
+    },
+    {
+      "id": "M9",
+      "name": "rolling map + odometry",
+      "measured": "4 test(s) passed",
+      "target": "10-row shift; rotation; decay",
+      "passed": true,
+      "details": {
+        "tests_passed": 4
+      }
+    },
+    {
+      "id": "M10",
+      "name": "guidance decisions",
+      "measured": "1 test(s) passed",
+      "target": "GUIDE/CAUTION/STOP + reasons",
+      "passed": true,
+      "details": {
+        "tests_passed": 1
+      }
+    },
+    {
+      "id": "M11",
+      "name": "e2e safety invariants",
+      "measured": "veto unsafe=0%, naive=0% (this scene); glass FREE=0/630 UNKNOWN=609",
+      "target": "veto unsafe 0%; glass not FREE; no raise",
+      "passed": true,
+      "details": {
+        "tests_passed": 5,
+        "unsafe_naive": 0.0,
+        "unsafe_vetoed": 0.0,
+        "stop_y_vetoed_m": 3.55,
+        "glass_pixels": 9850,
+        "glass_footprint_cells": 630,
+        "glass_footprint_free": 0,
+        "glass_footprint_unknown": 609
+      }
+    },
+    {
+      "id": "M12",
+      "name": "ablation + CLI scripts",
+      "measured": "corr unsafe A=14.0% B=0.0% C=0.0% D=0.0%; 59.6 s",
+      "target": "C,D <= A; demo exit 0; weights exit 2",
+      "passed": true,
+      "details": {
+        "tests_passed": 4,
+        "unsafe_rate_corrupted": {
+          "A_naive": 0.14,
+          "B_conformal_floor": 0.0,
+          "C_geometric_veto": 0.0,
+          "D_conformal_margin": 0.0
+        },
+        "unsafe_rate": {
+          "A_naive": 0.105,
+          "B_conformal_floor": 0.0,
+          "C_geometric_veto": 0.0,
+          "D_conformal_margin": 0.0
+        },
+        "availability": {
+          "A_naive": 0.795,
+          "B_conformal_floor": 0.655,
+          "C_geometric_veto": 0.145,
+          "D_conformal_margin": 0.085
+        },
+        "mean_min_clearance_m": {
+          "A_naive": 0.09999999999999998,
+          "B_conformal_floor": 0.3947534226886112,
+          "C_geometric_veto": 0.49126909459150137,
+          "D_conformal_margin": 0.49620787681957274
+        },
+        "latency_p50_ms": {
+          "A_naive": 36.269749980419874,
+          "B_conformal_floor": 28.28079997561872,
+          "C_geometric_veto": 20.7554999506101,
+          "D_conformal_margin": 51.409500068984926
+        },
+        "elapsed_s": 59.62030329997651
+      }
+    },
+    {
+      "id": "M13",
+      "name": "latency + determinism",
+      "measured": "p50=1.5 ms; new tests 25.6 s; suite 114.9 s (target 150 s)",
+      "target": "p50 < 50 ms; identical; new < 60 s",
+      "passed": true,
+      "details": {
+        "tests_passed": 2,
+        "latency_p50_ms": 1.476299948990345,
+        "latency_max_ms": 5.944199860095978,
+        "new_tests_seconds": 25.555910700000823,
+        "full_suite_seconds": 114.90076470002532,
+        "full_suite_target_seconds": 150.0,
+        "full_suite_over_target": false,
+        "new_test_files": [
+          "tests/test_grid.py",
+          "tests/test_bev.py",
+          "tests/test_costmap.py",
+          "tests/test_astar.py",
+          "tests/test_targets.py",
+          "tests/test_smooth.py",
+          "tests/test_rolling.py",
+          "tests/test_guidance.py",
+          "tests/test_planner_e2e.py",
+          "tests/test_plan_demo.py"
         ]
       }
     }

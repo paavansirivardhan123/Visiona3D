@@ -434,6 +434,48 @@ python scripts/real_models_smoke.py --images path/to/stills --fake
 
 ---
 
+## Mapping and Planning (Research)
+
+The research mapping and planning layer turns one frame's depth, floor
+segmentation and calibration outputs into a ground-frame occupancy map, a
+costmap, a recommended path and a guidance decision. All automated results are
+**synthetic only** (analytic scenes, fake backends); every numeric default is
+labelled `TO TUNE ON REAL DATA` in code and in `docs/mapping_planning.md`.
+
+Safety principles enforced in the code:
+
+1. Free space must be certified. Unknown and uncertain cells are NOT traversable.
+2. Obstacles are placed at their conformal LOWER-BOUND distance (pessimistic layer), as well as nominal.
+3. Any failure gives a status (STOP_UNCLEAR or STOP_BLOCKED) and never an exception.
+4. The planner only recommends; it never claims the path is safe.
+
+- **Map:** `mapping/grid.py` (cell conventions), `mapping/bev.py` (certified
+  BEV votes, overhang height band, pessimistic lower-bound layer),
+  `mapping/rolling.py` (decayed, odometry-warped fusion - synthetic motion only).
+- **Planner:** `planning/costmap.py` (chamfer clearance + inflation),
+  `planning/astar.py` (octile A*, no corner cutting, status codes),
+  `planning/targets.py` (explore/anchor/multi-path), `planning/smooth.py`
+  (collision re-validating smoothing with raw-path fallback),
+  `planning/guidance.py` (GUIDE / CAUTION / STOP_UNCLEAR / STOP_BLOCKED with
+  reasons and abstention features).
+- **Measured (SYNTHETIC ONLY):** naive planning is unsafe on 14.0% of
+  wall-as-floor-corrupted scenes; adding conformal floor certification,
+  geometric veto and the lower-bound margin takes the unsafe rate to 0.0% at
+  the cost of availability (79.5% -> 8.5%). A see-through glass pane is never
+  certified free (0 of 630 footprint cells) and the recommended path keeps a
+  0.45 m stand-off. Median per-scene planning latency across variants is
+  20.8-51.4 ms in the latest synthetic run (machine-load dependent); A* alone on
+  the 70 x 75 grid has a 1.5 ms median.
+  Full table with bootstrap CIs: `reports/planner_eval/ablation_results.json`.
+- **Demo and evaluation:** `scripts/plan_demo.py --fake` (writes a BEV PNG with
+  the path overlay and a guidance JSON; exits 2 with a fetch hint when real
+  weights are missing) and `scripts/run_planner_eval.py` (200-scene synthetic
+  ablation, refuses fewer than 20 scenes).
+- **Docs:** `docs/mapping_planning.md` (definitions, safety principles, every
+  default, limitations, glossary).
+
+---
+
 ## Roadmap
 
 - [x] YOLOv8n real-time detection (4 camera feeds)
@@ -461,6 +503,9 @@ python scripts/real_models_smoke.py --images path/to/stills --fake
 - [x] Contextual goal arrival notifications & LLM guidance
 - [x] Step-based spatial tracking for noise elimination
 - [ ] 3D Objectization and segmentation
+- [x] Bird's-eye occupancy map with certified free space (synthetic evaluation)
+- [x] Conformal lower-bound obstacle margin and pessimistic map layer (synthetic)
+- [x] A* planner, target selection, smoothing and guidance decisions (synthetic)
 
 
 ## Author
