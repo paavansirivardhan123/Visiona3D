@@ -30,10 +30,19 @@ class SegFormerBackend:
         model_id: str = MODEL_ID,
         weights_dir: str | Path | None = None,
         device: str = "cpu",
+        input_size: int | None = None,
     ) -> None:
+        if input_size is not None:
+            size = int(input_size)
+            if size % 32 != 0 or not 128 <= size <= 1024:
+                raise ValueError(
+                    "input_size must be a multiple of 32 in [128, 1024] because "
+                    f"SegFormer uses 32-pixel patch merging; got {input_size!r}"
+                )
         self.model_id = str(model_id)
         self.weights_dir = Path(weights_dir) if weights_dir is not None else None
         self.device = str(device)
+        self.input_size = None if input_size is None else int(input_size)
         self._model = None
         self._processor = None
         self._class_map: dict[int, int] | None = None
@@ -90,21 +99,39 @@ class SegFormerBackend:
 
         torch = self._torch
         h, w = image.shape[:2]
-        inputs = self._processor(images=image, return_tensors="pt")
+        processor_kwargs: dict[str, object] = {}
+        if self.input_size is not None:
+            processor_kwargs["size"] = {
+                "height": self.input_size,
+                "width": self.input_size,
+            }
+        inputs = self._processor(
+            images=image, return_tensors="pt", **processor_kwargs
+        )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with torch.no_grad():
-            logits = self._model(**inputs).logits
-            logits = torch.nn.functional.interpolate(
-                logits, size=(h, w), mode="bilinear", align_corners=False
+            logits = self._model(**inputs).logits[0]
+            # Merge the 150 ADE classes into 4 at the model's low output
+            # resolution, then upsample only 4 channels. Softmax over 150
+            # classes at full display resolution costs seconds per frame.
+            low = logits.permute(1, 2, 0).detach().cpu().numpy()
+            probs_low = merge_class_probs(low, self._class_map or {})
+            probs_t = torch.from_numpy(probs_low).permute(2, 0, 1).unsqueeze(0)
+            probs_up = torch.nn.functional.interpolate(
+                probs_t, size=(h, w), mode="bilinear", align_corners=False
             )
-        logits_np = logits[0].permute(1, 2, 0).detach().cpu().numpy()
-
-        probs = merge_class_probs(logits_np, self._class_map or {})
+            sky_low = torch.zeros(logits.shape[1:], dtype=torch.bool)
+            argmax_low = logits.argmax(dim=0)
+            for source_id in self._sky_ids:
+                sky_low |= argmax_low == int(source_id)
+            sky_up = torch.nn.functional.interpolate(
+                sky_low.to(torch.float32)[None, None],
+                size=(h, w),
+                mode="nearest",
+            )[0, 0]
+        probs = np.ascontiguousarray(probs_up[0].permute(1, 2, 0).cpu().numpy())
         labels = labels_from_probs(probs)
-        if self._sky_ids:
-            sky_mask = np.isin(np.argmax(logits_np, axis=-1), np.asarray(self._sky_ids))
-        else:
-            sky_mask = np.zeros((h, w), dtype=bool)
+        sky_mask = sky_up.cpu().numpy() > 0.5
         # Sky is excluded from label metrics and is never allowed to become floor.
         labels[sky_mask] = MASK_OTHER
         return SegOutput(labels=labels, probs=probs, sky_mask=sky_mask)

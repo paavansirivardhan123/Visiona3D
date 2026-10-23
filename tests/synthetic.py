@@ -55,19 +55,23 @@ def render_scene(
 
     # Unit ray direction representation in C: p(t) = t * v_c where v_c = [dx, dy, 1.0]
     # Because v_c[2] == 1.0, the parameter t is exactly the camera depth z!
-    v_grid, u_grid = np.indices((H, W), dtype=np.float64)
-    dx = (u_grid - cx) / fx
-    dy = (v_grid - cy) / fy
-    dz = np.ones_like(dx)
-    v_c = np.stack([dx, dy, dz], axis=-1)  # (H, W, 3)
+    # The u and v grids are kept one-dimensional and broadcast, so the
+    # per-pixel direction is never materialised as an (H, W, 3) stack.
+    u = np.arange(W, dtype=np.float64)
+    v = np.arange(H, dtype=np.float64)[:, None]
+    dx = (u - cx)[None, :] / fx
+    dy = (v - cy) / fy
 
     # Floor normal in C: n = (0, cos(theta), sin(theta))
     theta_rad = math.radians(pitch_deg)
     n = np.array([0.0, math.cos(theta_rad), math.sin(theta_rad)], dtype=np.float64)
     e_right, e_fwd, e_up = ground_frame_basis(n)
 
+    def ray_dot(axis: np.ndarray) -> np.ndarray:
+        return axis[0] * dx + axis[1] * dy + axis[2]
+
     # 1. Floor plane intersection: n . (t * v_c) = h => t = h / (n . v_c)
-    n_dot_v = np.sum(v_c * n, axis=-1)
+    n_dot_v = ray_dot(n)
     t_floor = np.full((H, W), np.inf, dtype=np.float64)
     valid_floor = n_dot_v > 1e-8
     t_floor[valid_floor] = h / n_dot_v[valid_floor]
@@ -77,7 +81,7 @@ def render_scene(
     # 2. Vertical wall intersection at Ground frame Y = wall_distance
     # In G: Y(t) = t * (e_fwd . v_c)
     t_wall = np.full((H, W), np.inf, dtype=np.float64)
-    v_dot_fwd = np.sum(v_c * e_fwd, axis=-1)
+    v_dot_fwd = ray_dot(e_fwd)
     if wall_distance is not None and wall_distance > 0.0:
         valid_wall_dir = v_dot_fwd > 1e-8
         t_wall_cand = wall_distance / np.where(valid_wall_dir, v_dot_fwd, 1.0)
@@ -89,8 +93,8 @@ def render_scene(
     # 3. Axis-aligned boxes in G
     # Ray origin in G: O_G = (0, 0, h)
     # Ray direction in G: V_G = (e_right . v_c, e_fwd . v_c, e_up . v_c)
-    v_dot_right = np.sum(v_c * e_right, axis=-1)
-    v_dot_up = np.sum(v_c * e_up, axis=-1)
+    v_dot_right = ray_dot(e_right)
+    v_dot_up = ray_dot(e_up)
 
     t_boxes = []
     box_positions = []

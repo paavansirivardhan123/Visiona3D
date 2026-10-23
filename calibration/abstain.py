@@ -128,7 +128,7 @@ def _decision_from_features(
 
     if features.relative_interval_width is None:
         checks["relative_interval_width"] = True
-        notes.append("no nearest obstacle in corridor; interval check skipped")
+        notes.append("nearest-obstacle interval unavailable; interval check skipped")
     elif not math.isfinite(features.relative_interval_width):
         checks["relative_interval_width"] = False
         reasons.append("nearest-obstacle relative interval width is not finite")
@@ -278,7 +278,8 @@ class AbstainRule:
                 lo = float(nearest_obstacle_lower_m)
                 hi = float(nearest_obstacle_upper_m)
                 if math.isfinite(hi):
-                    rel_width = (hi - lo) / pred
+                    width = (hi - lo) / pred
+                    rel_width = width if width >= 0.0 else math.nan
                 else:
                     # One-sided interval: upper is +inf, so use the certified
                     # downward margin as the available relative width.  This

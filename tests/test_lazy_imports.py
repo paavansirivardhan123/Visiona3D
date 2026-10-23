@@ -1,4 +1,4 @@
-"""P9: importing perception modules must not import torch/transformers/ultralytics/cv2."""
+"""P9: importing perception modules must not import torch/transformers/ultralytics/cv2/mobile_sam."""
 
 from __future__ import annotations
 
@@ -18,13 +18,16 @@ MODULES = [
     "perception.depth_backend",
     "perception.detector_backend",
     "perception.pipeline",
+    "perception.seg_fusion",
+    "perception.fusion_config",
+    "calibration.depth_interval_config",
 ]
 
 CODE = """
 import sys
 for name in {modules!r}:
     __import__(name)
-heavy = [name for name in ("torch", "transformers", "ultralytics", "cv2") if name in sys.modules]
+heavy = [name for name in ("torch", "transformers", "ultralytics", "cv2", "mobile_sam") if name in sys.modules]
 print(",".join(heavy))
 raise SystemExit(1 if heavy else 0)
 """.format(modules=MODULES)

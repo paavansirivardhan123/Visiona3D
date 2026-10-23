@@ -27,10 +27,25 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from core.config import Intrinsics  # noqa: E402
+from perception.fusion_config import (  # noqa: E402
+    FusionConfigError,
+    RuntimeFusionConfig,
+    load_tuned_fusion_config,
+    wrap_seg_with_fusion,
+)
 from perception.interfaces import SegOutput  # noqa: E402
+from perception.seg_fusion import MobileSAMBackend  # noqa: E402
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".ppm"}
 DEFAULT_WEIGHTS = REPO_ROOT / "weights"
+DEPTH_TARGETS = {
+    "indoor": "depth-anything-v2-metric-indoor-small",
+    "outdoor": "depth-anything-v2-metric-outdoor-small",
+}
+DEPTH_MODEL_IDS = {
+    "indoor": "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
+    "outdoor": "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf",
+}
 
 SEGMENTATION_COLORS = {
     0: (0, 0, 0),        # unlabeled / sky
@@ -58,8 +73,14 @@ def _parse_ppm(path: Path) -> np.ndarray:
         while index < len(data) and not data[index : index + 1].isspace():
             index += 1
         tokens.append(data[start:index])
-    while index < len(data) and data[index : index + 1].isspace():
+    # The header ends after exactly one separator. Skipping every whitespace
+    # byte would eat raster pixels whose value happens to be 9/10/13/32.
+    if data[index : index + 2] == b"\r\n":
+        index += 2
+    elif index < len(data) and data[index : index + 1].isspace():
         index += 1
+    else:
+        raise ValueError(f"{path.name}: missing separator after PPM header")
     width, height, maxval = (int(token) for token in tokens)
     if maxval != 255:
         raise ValueError(f"{path.name}: only 8-bit PPM is supported")
@@ -110,15 +131,23 @@ def _yolo_weights(weights_dir: Path) -> Path:
     return REPO_ROOT / "yolo11n.pt"
 
 
-def check_weights(weights_dir: Path) -> list[dict[str, str]]:
+def _depth_target(depth_variant: str) -> str:
+    if depth_variant not in DEPTH_TARGETS:
+        raise ValueError(
+            f"depth variant must be one of {sorted(DEPTH_TARGETS)}, got {depth_variant!r}"
+        )
+    return DEPTH_TARGETS[depth_variant]
+
+
+def check_weights(
+    weights_dir: Path, depth_variant: str = "indoor"
+) -> list[dict[str, str]]:
     """Return missing-weight entries for the real backends."""
+    depth_target = _depth_target(depth_variant)
     missing = []
     checks = [
         ("nvidia/segformer-b0-finetuned-ade-512-512", weights_dir / "segformer-b0-ade" / "config.json"),
-        (
-            "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
-            weights_dir / "depth-anything-v2-metric-indoor-small" / "config.json",
-        ),
+        (DEPTH_MODEL_IDS[depth_variant], weights_dir / depth_target / "config.json"),
         ("yolo11n.pt", _yolo_weights(weights_dir)),
     ]
     for model_id, expected in checks:
@@ -127,9 +156,7 @@ def check_weights(weights_dir: Path) -> list[dict[str, str]]:
     return missing
 
 
-def _make_fakes(image: np.ndarray):
-    from perception.fakes import FakeDepthBackend, FakeDetector, FakeSegBackend
-
+def _fake_scene_kwargs(image: np.ndarray) -> dict[str, Any]:
     height, width = image.shape[:2]
     K = Intrinsics(
         fx=0.9 * width,
@@ -140,19 +167,63 @@ def _make_fakes(image: np.ndarray):
         height=height,
     )
     boxes = [(-0.25, 0.25, 2.4, 2.8, 0.35, 0.85)]
-    common = dict(K=K, H=height, W=width, h=1.4, pitch_deg=15.0, wall_distance=4.0, boxes=boxes, seed=7)
+    return dict(
+        K=K,
+        H=height,
+        W=width,
+        h=1.4,
+        pitch_deg=15.0,
+        wall_distance=4.0,
+        boxes=boxes,
+        seed=7,
+    )
+
+
+def _make_fakes(image: np.ndarray):
+    from perception.fakes import FakeDepthBackend, FakeDetector, FakeSegBackend
+
+    common = _fake_scene_kwargs(image)
     return FakeSegBackend(**common), FakeDepthBackend(**common), FakeDetector(**common)
 
 
-def _make_real(weights_dir: Path):
+def _make_fake_sam(image: np.ndarray):
+    from perception.fakes import FakePromptMaskBackend
+
+    return FakePromptMaskBackend(**_fake_scene_kwargs(image), mode="floor")
+
+
+def make_real_backends(weights_dir: Path, depth_variant: str = "indoor"):
     from perception.depth_backend import DepthAnythingBackend
     from perception.detector_backend import YoloDetectorBackend
     from perception.seg_backend import SegFormerBackend
 
     seg = SegFormerBackend(weights_dir=weights_dir / "segformer-b0-ade")
-    depth = DepthAnythingBackend(weights_dir=weights_dir / "depth-anything-v2-metric-indoor-small")
+    depth = DepthAnythingBackend(
+        variant=depth_variant,
+        weights_dir=weights_dir / _depth_target(depth_variant),
+    )
     detector = YoloDetectorBackend(weights=_yolo_weights(weights_dir))
     return seg, depth, detector
+
+
+def _fusion_record(backend: Any) -> dict[str, Any] | None:
+    result = getattr(backend, "last_result", None)
+    if result is None:
+        return None
+    iou = float(result.iou)
+    sam_score = float(result.sam_score)
+    return {
+        "accepted": bool(result.accepted),
+        "reason": str(result.reason),
+        "prompt_count": int(result.prompt_count),
+        "iou": iou if np.isfinite(iou) else None,
+        "sam_score": sam_score if np.isfinite(sam_score) else None,
+        "added_floor_pixels": int(result.added_floor_pixels),
+        "removed_floor_pixels": int(result.removed_floor_pixels),
+        "timings_ms": {
+            str(name): float(ms) for name, ms in result.timings_ms.items()
+        },
+    }
 
 
 def _overlay(image: np.ndarray, seg: SegOutput, detections: list) -> np.ndarray:
@@ -178,6 +249,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", default="reports", help="output folder for JSON + overlays")
     parser.add_argument("--fake", action="store_true", help="use fake analytic backends")
     parser.add_argument("--weights-dir", default=str(DEFAULT_WEIGHTS), help="local weights folder")
+    parser.add_argument(
+        "--fusion-config",
+        default=None,
+        help="fusion_tuning.json whose validated selection configures runtime fusion",
+    )
     args = parser.parse_args(argv)
 
     image_dir = Path(args.images)
@@ -188,6 +264,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not paths:
         print(f"ERROR: no images found in {image_dir} ({', '.join(sorted(IMAGE_SUFFIXES))})")
         return 2
+
+    fusion_config: RuntimeFusionConfig | None = None
+    if args.fusion_config:
+        try:
+            fusion_config = load_tuned_fusion_config(
+                Path(args.fusion_config), allow_fake=bool(args.fake)
+            )
+        except FusionConfigError as exc:
+            print(f"ERROR: {exc}")
+            return 2
 
     weights_dir = Path(args.weights_dir)
     if not args.fake:
@@ -204,11 +290,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("  depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf, yolo11n.pt")
             return 2
 
+    sam_backend = None
+    if fusion_config is not None and fusion_config.enabled and not args.fake:
+        sam_backend = MobileSAMBackend(
+            checkpoint=weights_dir / "mobile-sam" / "mobile_sam.pt"
+        )
+        sam_errors = sam_backend.preflight()
+        if sam_errors:
+            print("ERROR: tuned fusion is enabled but MobileSAM is not ready:")
+            for error in sam_errors:
+                print(f"  - {error}")
+            print("\nFetch it with:")
+            print("  python scripts/fetch_models.py --dry-run")
+            print("  python scripts/fetch_models.py --yes")
+            print("MobileSAM is a manual download; see docs/perception_backends.md")
+            return 2
+
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     report: dict[str, Any] = {
         "generated": datetime.datetime.now().isoformat(),
         "fake": bool(args.fake),
+        "fusion_config": (
+            None if fusion_config is None else fusion_config.to_dict()
+        ),
         "images": [],
     }
 
@@ -216,14 +321,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         image = load_image(path)
         height, width = image.shape[:2]
         if args.fake:
-            seg_backend, depth_backend, detector_backend = _make_fakes(image)
+            base_seg, depth_backend, detector_backend = _make_fakes(image)
         else:
-            seg_backend, depth_backend, detector_backend = _make_real(weights_dir)
+            base_seg, depth_backend, detector_backend = make_real_backends(weights_dir)
+
+        seg_backend = base_seg
+        if fusion_config is not None and fusion_config.enabled:
+            sam = _make_fake_sam(image) if args.fake else sam_backend
+            seg_backend = wrap_seg_with_fusion(base_seg, sam, fusion_config)
 
         timings: dict[str, float] = {}
         start = time.perf_counter()
         seg = seg_backend.predict(image)
         timings["seg_ms"] = (time.perf_counter() - start) * 1000.0
+        fusion = (
+            _fusion_record(seg_backend)
+            if fusion_config is not None and fusion_config.enabled
+            else None
+        )
         start = time.perf_counter()
         depth = depth_backend.predict(image)
         timings["depth_ms"] = (time.perf_counter() - start) * 1000.0
@@ -254,13 +369,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "class_histogram": histogram,
             "n_detections": len(detections),
             "timings_ms": timings,
+            "fusion": fusion,
             "overlay": overlay_path.name,
         }
         report["images"].append(entry)
+        fusion_text = "" if fusion is None else f" fusion={fusion['reason']}"
         print(
             f"{path.name}: image={image.shape} seg={labels.shape} depth={depth_arr.shape} "
             f"range=[{depth_min}, {depth_max}] m classes={histogram} dets={len(detections)} "
-            f"timings={timings}"
+            f"timings={timings}{fusion_text}"
         )
 
     json_path = out_dir / "real_models_smoke.json"

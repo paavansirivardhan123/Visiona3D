@@ -187,6 +187,9 @@ def test_m11_pessimistic_pointmap_places_wall_at_lower_bound():
     assert outputs.lift is not None
     assert outputs.lift.point_map_g is not None
     assert outputs.pessimistic_pointmap_g is not None
+    assert outputs.conformal_upper_pointmap_g is not None
+    # The overestimation score makes no upper claim, so the upper map is NaN.
+    assert not np.isfinite(outputs.conformal_upper_pointmap_g).any()
 
     wall_px = outputs.seg.labels == 2
     assert wall_px.sum() > 0

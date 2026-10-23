@@ -35,6 +35,7 @@ class BevGrid:
     occupied_votes: np.ndarray  # (n_rows, n_cols) int32
     uncertain_votes: np.ndarray  # (n_rows, n_cols) int32
     cfg: MapConfig
+    obstacle_mask: np.ndarray  # pixel mask classified as obstacle from nominal points
 
 
 def build_bev(
@@ -99,43 +100,52 @@ def build_bev(
         if veto_flat.size != n_pts:
             raise ValueError("vetoed shape mismatch")
     else:
-        veto_flat = np.zeros(n_pts, dtype=bool)
+        veto_flat = None
 
     n_rows, n_cols = cfg.n_rows, cfg.n_cols
     free_votes = np.zeros((n_rows, n_cols), dtype=np.int32)
     occ_votes = np.zeros((n_rows, n_cols), dtype=np.int32)
     unc_votes = np.zeros((n_rows, n_cols), dtype=np.int32)
+    obstacle_mask = np.zeros(n_pts, dtype=bool)
 
     # 1. Nominal points classification
     valid = np.isfinite(pts[:, 0]) & np.isfinite(pts[:, 1]) & np.isfinite(pts[:, 2])
-    pts_val = pts[valid]
-    lbls_val = lbls_flat[valid]
-    cert_val = cert_flat[valid]
-    veto_val = veto_flat[valid]
-
-    if pts_val.size > 0:
-        c, r = world_to_cell(pts_val[:, 0], pts_val[:, 1], cfg)
+    if np.any(valid):
+        # Index once and keep only the columns still needed after cell
+        # conversion; this avoids copying and re-filtering full 3-D points.
+        idx = np.flatnonzero(valid)
+        z_val = pts[idx, 2]
+        lbls_val = lbls_flat[idx]
+        cert_val = cert_flat[idx]
+        c, r = world_to_cell(pts[idx, 0], pts[idx, 1], cfg)
         b_mask = in_bounds(c, r, cfg)
 
-        pts_val = pts_val[b_mask]
+        z_val = z_val[b_mask]
         lbls_val = lbls_val[b_mask]
         cert_val = cert_val[b_mask]
-        veto_val = veto_val[b_mask]
         c = c[b_mask]
         r = r[b_mask]
 
-        z_val = pts_val[:, 2]
-
         is_non_floor = (lbls_val == MASK_WALL) | (lbls_val == MASK_OBSTACLE)
-        is_vetoed = veto_val
-        in_height_band = (z_val >= cfg.z_band_min) & (z_val <= cfg.z_band_max) & (~cert_val)
+        in_height_band = (
+            (z_val >= cfg.z_band_min) & (z_val <= cfg.z_band_max) & (~cert_val)
+        )
+        if veto_flat is None:
+            is_occupied = is_non_floor | in_height_band
+        else:
+            is_occupied = is_non_floor | veto_flat[idx][b_mask] | in_height_band
+        is_free = (
+            cert_val
+            & (z_val >= -cfg.tau_floor)
+            & (z_val <= cfg.tau_floor)
+            & (~is_occupied)
+        )
+        is_uncertain = (lbls_val == MASK_FLOOR) & (~cert_val) & (~is_occupied)
 
-        is_occupied = is_non_floor | is_vetoed | in_height_band
-        is_free = cert_val & (np.abs(z_val) <= cfg.tau_floor) & (~is_occupied)
-        is_uncertain = (lbls_val == MASK_FLOOR) & (~cert_val) & (~is_occupied) & (~is_free)
+        obstacle_mask[idx[b_mask][is_occupied]] = True
 
         # Accumulate votes (bincount over flattened cell indices; exact integer counts)
-        flat_idx = r.astype(np.int64) * n_cols + c
+        flat_idx = r * n_cols + c
         occ_votes = np.bincount(flat_idx[is_occupied], minlength=n_rows * n_cols).reshape(n_rows, n_cols).astype(np.int32)
         free_votes = np.bincount(flat_idx[is_free], minlength=n_rows * n_cols).reshape(n_rows, n_cols).astype(np.int32)
         unc_votes = np.bincount(flat_idx[is_uncertain], minlength=n_rows * n_cols).reshape(n_rows, n_cols).astype(np.int32)
@@ -149,14 +159,16 @@ def build_bev(
             p_valid = np.isfinite(p_pts[:, 0]) & np.isfinite(p_pts[:, 1]) & np.isfinite(p_pts[:, 2])
             # Only obstacle / non-floor or height band points cast lower bound votes
             # (or all points flagged as obstacle)
-            p_non_floor = (lbls_flat == MASK_WALL) | (lbls_flat == MASK_OBSTACLE) | veto_flat
+            p_non_floor = (lbls_flat == MASK_WALL) | (lbls_flat == MASK_OBSTACLE)
+            if veto_flat is not None:
+                p_non_floor = p_non_floor | veto_flat
             p_height = (p_pts[:, 2] >= cfg.z_band_min) & (p_pts[:, 2] <= cfg.z_band_max) & (~cert_flat)
             p_occ = (p_non_floor | p_height) & p_valid
 
             if np.any(p_occ):
                 p_c, p_r = world_to_cell(p_pts[p_occ, 0], p_pts[p_occ, 1], cfg)
                 p_b = in_bounds(p_c, p_r, cfg)
-                p_flat = p_r[p_b].astype(np.int64) * n_cols + p_c[p_b]
+                p_flat = p_r[p_b] * n_cols + p_c[p_b]
                 occ_votes += np.bincount(p_flat, minlength=n_rows * n_cols).reshape(n_rows, n_cols)
 
     # 3. Resolve cell states
@@ -180,4 +192,5 @@ def build_bev(
         occupied_votes=occ_votes,
         uncertain_votes=unc_votes,
         cfg=cfg,
+        obstacle_mask=obstacle_mask.reshape(lbls.shape),
     )

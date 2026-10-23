@@ -45,6 +45,14 @@ MODELS: list[dict[str, Any]] = [
         "target": "yolo11n.pt",
         "purpose": "Ultralytics YOLO11-nano detector",
     },
+    {
+        "id": "mobile_sam.pt (MobileSAM ViT-T)",
+        "kind": "manual",
+        "size_mb": 40.0,
+        "target": "weights/mobile-sam/mobile_sam.pt",
+        "purpose": "Promptable floor refinement (manual download)",
+        "source": "https://github.com/ChaoningZhang/MobileSAM",
+    },
 ]
 
 
@@ -85,7 +93,7 @@ def _check_hf_ids() -> int:
     failures = 0
     for model in MODELS:
         if model["kind"] != "hf":
-            print(f"{model['id']}: local/ultralytics asset, not a HF repo id (skipped)")
+            print(f"{model['id']}: non-HF asset, not a HF repo id (skipped)")
             continue
         url = f"https://huggingface.co/api/models/{model['id']}"
         try:
@@ -127,12 +135,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     print("\nDownloading weights...")
+    manual: list[dict[str, Any]] = []
     for model in MODELS:
+        if model["kind"] == "manual":
+            manual.append(model)
+            continue
         print(f"- {model['id']} -> {model['target']}")
         if model["kind"] == "hf":
             _download_hf(model)
         else:
             _download_ultralytics(model)
+    if manual:
+        print("\nManual downloads still required (no network access performed):")
+        for model in manual:
+            print(
+                f"- {model['id']}: get it from {model.get('source')} "
+                f"and save it to {model['target']}"
+            )
     print("Done.")
     return 0
 

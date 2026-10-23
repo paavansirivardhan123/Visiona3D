@@ -11,6 +11,7 @@ from mapping.grid import (
     world_to_cell,
 )
 from mapping.bev import BevGrid, build_bev
+from mapping.obstacles import nearest_obstacle_telemetry
 from mapping.rolling import Odometry2D, RollingMap
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "in_bounds",
     "BevGrid",
     "build_bev",
+    "nearest_obstacle_telemetry",
     "Odometry2D",
     "RollingMap",
 ]

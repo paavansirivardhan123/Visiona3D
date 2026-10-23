@@ -112,9 +112,12 @@ def backproject(depth: np.ndarray, K: Union[Intrinsics, np.ndarray]) -> np.ndarr
     h, w = depth_arr.shape
     fx, fy, cx, cy = _extract_intrinsics(K)
 
-    v_grid, u_grid = np.indices((h, w), dtype=np.float64)
-    x = (u_grid - cx) * depth_arr / fx
-    y = (v_grid - cy) * depth_arr / fy
+    # Broadcast 1-D pixel grids instead of materialising two full H x W
+    # index arrays.
+    u = np.arange(w, dtype=np.float64)
+    v = np.arange(h, dtype=np.float64)[:, None]
+    x = (u - cx) * depth_arr / fx
+    y = (v - cy) * depth_arr / fy
     z = depth_arr
 
     return np.stack([x, y, z], axis=-1)

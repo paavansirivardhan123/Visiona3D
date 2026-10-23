@@ -13,6 +13,7 @@ import numpy as np
 from core.config import Intrinsics, MASK_FLOOR, MASK_WALL, MASK_OBSTACLE, MASK_OTHER
 from perception.interfaces import Det2D, DepthOutput, SegOutput
 from perception.postprocess import resize_bilinear_nanaware
+from perception.seg_fusion import PromptMaskOutput
 
 
 class _FakeSceneBase:
@@ -239,4 +240,76 @@ class FakeDetector(_FakeSceneBase):
         return detections
 
 
-__all__ = ["FakeSegBackend", "FakeDepthBackend", "FakeDetector"]
+class FakePromptMaskBackend(_FakeSceneBase):
+    """Analytic promptable-mask backend for fusion tests.
+
+    Modes:
+        ``floor``: exact analytic floor (agrees with a correct segmentation).
+        ``floor_plus_wall``: floor and wall (unsafe boundary spill).
+        ``wall``: wall only (disagrees completely).
+        ``empty``: no mask pixels.
+        ``raise``: raises ``RuntimeError`` to exercise the error fallback.
+
+    Prompt coordinates are validated and recorded in ``last_points``; the mask
+    itself is analytic so tests never depend on a model or the prompt content.
+    """
+
+    MODES = ("floor", "floor_plus_wall", "wall", "empty", "raise")
+
+    def __init__(
+        self,
+        K: Union[Intrinsics, np.ndarray],
+        H: int,
+        W: int,
+        h: float = 1.4,
+        pitch_deg: float = 15.0,
+        wall_distance: float | None = 4.0,
+        boxes: Sequence[Sequence[float]] = (),
+        seed: int = 0,
+        mode: str = "floor",
+        score: float = 0.9,
+    ) -> None:
+        super().__init__(K, H, W, h, pitch_deg, wall_distance, boxes, seed)
+        if mode not in self.MODES:
+            raise ValueError(f"mode must be one of {self.MODES}, got {mode!r}")
+        self.mode = str(mode)
+        self.score = float(score)
+        self.calls = 0
+        self.last_points: np.ndarray | None = None
+
+    def predict(self, image_rgb: np.ndarray, points_xy: np.ndarray) -> PromptMaskOutput:
+        self._check_image(image_rgb)
+        points = np.asarray(points_xy)
+        if points.ndim != 2 or points.shape[1] != 2 or points.shape[0] < 1:
+            raise ValueError(f"points_xy must be (N, 2) with N >= 1, got {points.shape}")
+        if not np.isfinite(points).all():
+            raise ValueError("points_xy must be finite")
+        if (
+            (points[:, 0] < 0).any()
+            or (points[:, 0] > self.W - 1).any()
+            or (points[:, 1] < 0).any()
+            or (points[:, 1] > self.H - 1).any()
+        ):
+            raise ValueError(f"points_xy outside image bounds {self.W}x{self.H}")
+
+        self.calls += 1
+        self.last_points = points.copy()
+        if self.mode == "raise":
+            raise RuntimeError("deliberate fake promptable-mask failure")
+        if self.mode == "empty":
+            mask = np.zeros((self.H, self.W), dtype=bool)
+        elif self.mode == "floor":
+            mask = self.floor_mask.copy()
+        elif self.mode == "floor_plus_wall":
+            mask = self.floor_mask | self.wall_mask
+        else:
+            mask = self.wall_mask.copy()
+        return PromptMaskOutput(mask=mask, score=self.score)
+
+
+__all__ = [
+    "FakeSegBackend",
+    "FakeDepthBackend",
+    "FakeDetector",
+    "FakePromptMaskBackend",
+]

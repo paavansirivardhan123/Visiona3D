@@ -63,14 +63,13 @@ def camera_to_ground(points_c: np.ndarray, n: np.ndarray, h: float) -> np.ndarra
     e_right, e_fwd, e_up = ground_frame_basis(n)
     n_unit = -e_up
 
-    # X = e_right.p
-    x_g = np.sum(pts * e_right, axis=-1)
-    # Y = e_fwd.p
-    y_g = np.sum(pts * e_fwd, axis=-1)
-    # Z = h - n.p
-    z_g = h - np.sum(pts * n_unit, axis=-1)
-
-    return np.stack([x_g, y_g, z_g], axis=-1)
+    # Single matrix product instead of three full-array dot products.  Rows
+    # are the ground axes expressed in C, so [X, Y, Z - h] = R @ p.
+    basis = np.stack([e_right, e_fwd, -n_unit], axis=0)
+    flat = pts.reshape(-1, 3)
+    out = flat @ basis.T
+    out[:, 2] += h
+    return out.reshape(pts.shape)
 
 
 def ground_to_camera(points_g: np.ndarray, n: np.ndarray, h: float) -> np.ndarray:

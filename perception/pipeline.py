@@ -97,6 +97,7 @@ class PerceptionPipeline:
         certified_final: np.ndarray | None = None
         vetoed: np.ndarray | None = None
         pessimistic_pointmap_g: np.ndarray | None = None
+        conformal_upper_pointmap_g: np.ndarray | None = None
 
         image = np.asarray(image_rgb)
         if image.ndim != 3 or image.shape[2] != 3 or image.dtype != np.uint8:
@@ -242,19 +243,29 @@ class PerceptionPipeline:
 
                         if cdepth is not None and getattr(cdepth, "_fitted", False):
                             c_pred = cdepth.predict(depth_output.depth_m.reshape(-1))
-                            lower_depth = c_pred.lower.reshape(depth_output.depth_m.shape)
                             s_scale = lift_result.scale_result.s
-                            scaled_lower_depth = lower_depth * s_scale
-                            lower_pts_c = backproject(scaled_lower_depth, self.K)
                             if lift_result.plane_fit.status == FitStatus.OK:
                                 n_norm = lift_result.plane_fit.n
                             else:
                                 p_rad = math.radians(self.mount.pitch_deg)
                                 n_norm = np.array([0.0, math.cos(p_rad), math.sin(p_rad)], dtype=np.float64)
-                            lower_pts_g = camera_to_ground(lower_pts_c, n_norm, self.mount.h_known)
-                            inv_lower = ~np.isfinite(scaled_lower_depth) | (scaled_lower_depth <= 0.0)
-                            pessimistic_pointmap_g = lower_pts_g.astype(np.float32)
-                            pessimistic_pointmap_g[inv_lower] = np.nan
+
+                            def _ground_bound(bound_depth: np.ndarray) -> np.ndarray:
+                                scaled = np.asarray(bound_depth, dtype=np.float64) * s_scale
+                                invalid = ~np.isfinite(scaled) | (scaled <= 0.0)
+                                safe = np.where(invalid, np.nan, scaled)
+                                pts_g = camera_to_ground(
+                                    backproject(safe, self.K), n_norm, self.mount.h_known
+                                ).astype(np.float32)
+                                pts_g[invalid] = np.nan
+                                return pts_g
+
+                            pessimistic_pointmap_g = _ground_bound(
+                                c_pred.lower.reshape(depth_output.depth_m.shape)
+                            )
+                            conformal_upper_pointmap_g = _ground_bound(
+                                c_pred.upper.reshape(depth_output.depth_m.shape)
+                            )
                     except Exception as c_exc:  # noqa: BLE001
                         statuses["conformal"] = _error_code("conformal", c_exc)
         except Exception as exc:  # noqa: BLE001
@@ -273,6 +284,7 @@ class PerceptionPipeline:
             certified_final=certified_final,
             vetoed=vetoed,
             pessimistic_pointmap_g=pessimistic_pointmap_g,
+            conformal_upper_pointmap_g=conformal_upper_pointmap_g,
         )
 
     def reset(self) -> None:

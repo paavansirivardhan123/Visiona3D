@@ -81,6 +81,86 @@ def test_m10_guidance_decisions_and_reasons_on_hand_crafted_cases():
     assert any("guidance active" in r for r in g_guide.reasons)
 
 
+def _guidance_with_interval(nearest_obstacle):
+    cfg = MapConfig(res=0.10, x_min=-2.0, x_max=2.0, y_min=0.0, y_max=5.0)
+    grid = np.full((cfg.n_rows, cfg.n_cols), CELL_FREE, dtype=np.uint8)
+    costmap = build_costmap(grid, cfg=cfg, user_half_width_m=0.10, safety_margin_m=0.0)
+    path = PathResult(
+        status="OK",
+        path=[(20, 10), (20, 20)],
+        path_world=[(0.0, 1.0), (0.0, 2.0)],
+        cost=1.0,
+        length_m=1.0,
+        clearances=[0.45, 0.50],
+        min_clearance_m=0.45,
+    )
+    points = np.zeros((10, 3), dtype=np.float64)
+    points[:, 1] = np.linspace(1.0, 3.0, 10)
+    certified = np.ones(10, dtype=bool)
+    return compute_guidance(
+        costmap,
+        path_result=path,
+        points_g=points,
+        certified_floor_mask=certified,
+        plane_inlier_ratio=1.0,
+        plane_status="OK",
+        scale_status="OK",
+        nearest_obstacle=nearest_obstacle,
+    )
+
+
+def test_guidance_abstains_when_interval_is_too_wide():
+    """A wide nearest-obstacle interval must abstain, not guide."""
+    guidance = _guidance_with_interval(
+        {
+            "label": "obstacle",
+            "distance_nominal_m": 2.0,
+            "distance_lower_m": 0.5,
+            "distance_upper_m": 4.0,
+            "bearing_deg": 0.0,
+        }
+    )
+    assert guidance.decision == "STOP_UNCLEAR"
+    assert any("relative interval width" in reason for reason in guidance.reasons)
+    assert guidance.abstain_features["relative_interval_width"] == pytest.approx(1.75)
+
+
+def test_guidance_passes_and_uses_interval_when_narrow():
+    guidance = _guidance_with_interval(
+        {
+            "label": "obstacle",
+            "distance_nominal_m": 2.0,
+            "distance_lower_m": 1.8,
+            "distance_upper_m": 2.2,
+            "bearing_deg": 0.0,
+        }
+    )
+    assert guidance.decision == "GUIDE"
+    assert guidance.abstain_features["relative_interval_width"] == pytest.approx(0.2)
+
+
+def test_guidance_skips_interval_check_without_bounds():
+    guidance = _guidance_with_interval(
+        {"label": "obstacle", "distance_nominal_m": 2.0, "bearing_deg": 0.0}
+    )
+    assert guidance.decision == "GUIDE"
+    assert guidance.abstain_features["relative_interval_width"] is None
+
+
+def test_guidance_abstains_on_inverted_interval():
+    guidance = _guidance_with_interval(
+        {
+            "label": "obstacle",
+            "distance_nominal_m": 3.0,
+            "distance_lower_m": 3.5,
+            "distance_upper_m": 2.5,
+            "bearing_deg": 0.0,
+        }
+    )
+    assert guidance.decision == "STOP_UNCLEAR"
+    assert any("not finite" in reason for reason in guidance.reasons)
+
+
 def test_m8_conformal_margin_hand_computed_distance_and_clearance():
     """M8: Stub q = 0.20 with obstacle at 4.0 m places pessimistic obstacle at 3.2 m."""
     # 1. Stub ConformalDepth with known quantile q = 0.20

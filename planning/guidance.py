@@ -47,7 +47,7 @@ class Guidance:
     distance_to_turn_m: float  # Distance along path to first turn
     left_clearance_m: float  # Minimum lateral clearance on the left (X < 0)
     right_clearance_m: float  # Minimum lateral clearance on the right (X > 0)
-    nearest_obstacle: dict[str, Any]  # {label, distance_nominal_m, distance_lower_m, bearing_deg}
+    nearest_obstacle: dict[str, Any]  # {label, distance_nominal_m, bearing_deg[, distance_lower_m, distance_upper_m]}
     reasons: list[str]  # Human-readable justifications
     abstain_features: dict[str, Any]  # Features evaluated by AbstainRule
     timings: dict[str, float] = field(default_factory=dict)  # Component latencies in ms
@@ -138,7 +138,9 @@ def compute_guidance(
         plane_inlier_ratio: Ground plane RANSAC inlier ratio.
         plane_status: Plane fit status string.
         scale_status: Metric scale status string.
-        nearest_obstacle: Telemetry dict for closest obstacle.
+        nearest_obstacle: Telemetry dict for closest obstacle. Optional
+            ``distance_lower_m``/``distance_upper_m`` entries feed abstention;
+            without a lower bound the interval check is skipped explicitly.
         caution_clearance_m: Clearance threshold triggering CAUTION.
         lookahead_dist_m: Distance in metres to steering lookahead point.
 
@@ -161,8 +163,13 @@ def compute_guidance(
             c_mask = np.asarray(certified_floor_mask, dtype=bool).reshape(-1)
 
             pred_m = nearest_obstacle.get("distance_nominal_m") if nearest_obstacle else None
-            lower_m = nearest_obstacle.get("distance_lower_m") if nearest_obstacle else None
-            upper_m = nearest_obstacle.get("distance_upper_m", float("inf")) if nearest_obstacle else None
+            if pred_m is not None and "distance_lower_m" in nearest_obstacle:
+                lower_m = nearest_obstacle["distance_lower_m"]
+                upper_m = nearest_obstacle.get("distance_upper_m", float("inf"))
+            else:
+                # No fitted interval: skip the interval check explicitly rather
+                # than claiming a zero-width interval.
+                pred_m = lower_m = upper_m = None
             abstain_decision = abstain_rule.evaluate(
                 pts_arr,
                 c_mask,
@@ -202,14 +209,12 @@ def compute_guidance(
             nearest_obstacle = {
                 "label": "obstacle",
                 "distance_nominal_m": nearest_nominal,
-                "distance_lower_m": nearest_nominal,
                 "bearing_deg": float(bearing),
             }
         else:
             nearest_obstacle = {
                 "label": "none",
                 "distance_nominal_m": float("inf"),
-                "distance_lower_m": float("inf"),
                 "bearing_deg": 0.0,
             }
 

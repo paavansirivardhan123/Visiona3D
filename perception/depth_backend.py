@@ -19,6 +19,22 @@ OUTDOOR_MODEL_ID = "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf"
 VARIANT_ENV = "VISIONA_DEPTH_VARIANT"
 
 
+def depth_processor_size(
+    frame_height: int,
+    frame_width: int,
+    input_size: int,
+) -> dict[str, int]:
+    """Return a height/width processor size preserving aspect at 14-px steps."""
+    height = int(frame_height)
+    width = int(frame_width)
+    size = int(input_size)
+    if height <= 0 or width <= 0:
+        raise ValueError(f"frame size must be positive, got {frame_width}x{frame_height}")
+    out_w = int(round(size * (width / float(height)) / 14.0)) * 14
+    out_w = max(14, out_w)
+    return {"height": size, "width": out_w}
+
+
 class DepthAnythingBackend:
     """Depth Anything V2 metric depth backend (indoor or outdoor Small)."""
 
@@ -31,6 +47,7 @@ class DepthAnythingBackend:
         weights_dir: str | Path | None = None,
         device: str = "cpu",
         max_range_m: float = 10.0,
+        input_size: int | None = None,
     ) -> None:
         selected = (variant or os.environ.get(VARIANT_ENV, "indoor")).strip().lower()
         if selected not in ("indoor", "outdoor"):
@@ -38,11 +55,19 @@ class DepthAnythingBackend:
                 f"depth variant must be 'indoor' or 'outdoor', got {selected!r} "
                 f"(set {VARIANT_ENV} or pass variant=)"
             )
+        if input_size is not None:
+            size = int(input_size)
+            if size % 14 != 0 or not 140 <= size <= 1036:
+                raise ValueError(
+                    "input_size must be a multiple of 14 in [140, 1036] because "
+                    f"Depth Anything V2 uses 14-pixel patches; got {input_size!r}"
+                )
         self.variant = selected
         self.model_id = INDOOR_MODEL_ID if selected == "indoor" else OUTDOOR_MODEL_ID
         self.weights_dir = Path(weights_dir) if weights_dir is not None else None
         self.device = str(device)
         self.max_range_m = float(max_range_m)
+        self.input_size = None if input_size is None else int(input_size)
         self._model = None
         self._processor = None
 
@@ -89,7 +114,12 @@ class DepthAnythingBackend:
 
         torch = self._torch
         h, w = image.shape[:2]
-        inputs = self._processor(images=image, return_tensors="pt")
+        processor_kwargs: dict[str, object] = {}
+        if self.input_size is not None:
+            processor_kwargs["size"] = depth_processor_size(h, w, self.input_size)
+        inputs = self._processor(
+            images=image, return_tensors="pt", **processor_kwargs
+        )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with torch.no_grad():
             predicted = self._model(**inputs).predicted_depth
@@ -109,4 +139,5 @@ __all__ = [
     "INDOOR_MODEL_ID",
     "OUTDOOR_MODEL_ID",
     "VARIANT_ENV",
+    "depth_processor_size",
 ]

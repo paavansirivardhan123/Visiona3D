@@ -8,6 +8,10 @@ All backends exchange numpy arrays with a fixed, checkable contract:
 - depth: float32 (H, W) metres, z-depth in camera frame C, NaN where invalid
 - sky: boolean (H, W) mask, excluded from depth and label metrics
 
+After promptable refinement (``perception/seg_fusion.py``) ``labels`` may be a
+refined floor map while ``probs`` remain the base segmenter's. This split is
+deliberate: probability-based consumers keep the base model's uncertainty.
+
 Each dataclass exposes ``validate()`` returning a list of human-readable
 errors. An empty list means the object satisfies the interface contract.
 Backends are duck-typed Protocols so real and fake implementations are
@@ -219,6 +223,7 @@ class FrameOutputs:
     certified_final: np.ndarray | None = None
     vetoed: np.ndarray | None = None
     pessimistic_pointmap_g: np.ndarray | None = None
+    conformal_upper_pointmap_g: np.ndarray | None = None
 
     def validate(self) -> list[str]:
         """Return contract violations for the frame container."""

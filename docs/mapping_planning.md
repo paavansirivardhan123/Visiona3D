@@ -41,10 +41,11 @@ every module under `mapping/` and `planning/`:
   votes are UNCERTAIN; no votes means UNKNOWN. The pessimistic layer adds
   OCCUPIED votes at conformal lower-bound positions (Safety Principle 2).
 - **Pessimistic (lower-bound) layer** — every obstacle pixel's depth is shrunk
-  to its split-conformal lower bound (score "overestimation",
-  `lower = pred * (1 - q)`) before being lifted to G, and those points cast
-  OCCUPIED votes. With the stub `q = 0.20` used in tests, a wall at 4.0 m is
-  also placed at 3.2 m.
+  to its split-conformal lower bound (`lower = pred * (1 - q)`) before being
+  lifted to G, and those points cast OCCUPIED votes. The score
+  `overestimation` is the intended one for obstacle distance, but both
+  supported scores produce the same lower bound. With the stub `q = 0.20` used
+  in tests, a wall at 4.0 m is also placed at 3.2 m.
 - **Certified floor** — floor pixels whose segmentation probability passes the
   conformal floor threshold (`calibration.conformal_floor.certified_floor`)
   and which survive the geometric veto (`calibration.geometric_veto.
@@ -76,16 +77,70 @@ every module under `mapping/` and `planning/`:
 - **Guidance** — `planning/guidance.py`. `Guidance(decision in {GUIDE,
   CAUTION, STOP_UNCLEAR, STOP_BLOCKED}, heading_deg (positive right),
   lookahead_point_g, distance_to_turn_m, left_clearance_m, right_clearance_m,
-  nearest_obstacle {label, distance_nominal_m, distance_lower_m, bearing_deg},
-  reasons, abstain_features, timings)`. It calls
-  `calibration.abstain.AbstainRule` on corridor features computed from the map;
-  STOP_UNCLEAR on abstain; STOP_BLOCKED when no path; CAUTION when minimum
-  clearance is below the caution threshold.
+  nearest_obstacle {label, distance_nominal_m, bearing_deg, and optional
+  distance_lower_m / distance_upper_m}, reasons, abstain_features, timings)`.
+  It calls `calibration.abstain.AbstainRule` on corridor features computed from
+  the map; STOP_UNCLEAR on abstain; STOP_BLOCKED when no path; CAUTION when
+  minimum clearance is below the caution threshold.
+- **Nearest-obstacle telemetry** — `mapping/obstacles.py`. Distances are
+  measured from the user origin over the pixels the BEV classified as
+  obstacles. Conformal bounds are the minima of the lower/upper point maps over
+  those pixels; for every obstacle pixel `lower_i <= d_i <= upper_i`, so
+  `min lower` and `min upper` bound the true nearest distance. Missing bounds
+  are omitted, never replaced by the nominal value.
 - **Demo and ablation scripts** — `scripts/plan_demo.py` (one image or
-  `--fake`; prints the Guidance, writes a BEV PNG with the path overlay via a
-  stdlib PNG writer and a JSON; real mode exits with code 2 and a fetch hint
-  when weights are missing) and `scripts/run_planner_eval.py`
-  (SYNTHETIC ONLY ablation, described below).
+  `--fake`; prints the Guidance and writes `bev_path.png`,
+  `guidance_summary.json`, and a `run_summary.json` with intrinsics, fusion,
+  certification and backend-status provenance) and
+  `scripts/run_planner_eval.py` (SYNTHETIC ONLY ablation, described below).
+
+### Real-image demo path
+
+Real-image mode constructs SegFormer-B0, Depth Anything V2 (indoor or outdoor)
+and YOLO11n from local weights, and optionally wraps SegFormer with MobileSAM
+using a tuning report from `scripts/tune_fusion.py`. It exits `2` with fetch or
+calibration instructions when weights, calibrated intrinsics, or MobileSAM are
+missing, and refuses a synthetic tuning report in a real run. The image
+resolution must match the intrinsics exactly; there is no field-of-view guess.
+
+Certification is probability-only. `--floor-threshold` (default 0.90, TO TUNE
+ON REAL DATA) feeds the pipeline's conformal floor check and geometric veto, and
+`certified_final` is the only input that can vote FREE. If certification is
+unavailable, the demo fails closed to an all-False mask, prints a warning, and
+guidance reports STOP_UNCLEAR instead of treating fused labels as free space.
+
+The demo does not fit a depth interval by itself. Pass
+`--conformal-depth reports/calibration/depth_interval.json` to activate the
+pessimistic lower-bound obstacle layer. The artifact is written by
+`scripts/run_calibration_real.py` and loaded through
+`calibration/depth_interval_config.py`, which validates schema, provenance and
+arithmetic, and refuses a fake-mode artifact in a real run. Without it,
+obstacles use nominal distances only, the demo warns, and `run_summary.json`
+records `pessimistic_layer: false`; with it, the artifact provenance is
+recorded under `depth_interval` and the layer is `true`. Validation does not
+establish coverage: every quantile remains TO TUNE ON REAL DATA.
+
+The same artifact feeds nearest-obstacle telemetry. With it,
+`run_summary.json` records `nearest_obstacle` with the nominal distance and the
+conformal lower/upper bounds, and `AbstainRule` abstains when the relative
+interval width exceeds its threshold (default 0.50, TO TUNE ON REAL DATA).
+Without the artifact, no bound is fabricated: the interval check is skipped and
+`abstain_features.relative_interval_width` is `null`. An inverted interval is
+treated as non-finite and abstains. The demo prints the bounds on the
+`Nearest Obstacle` telemetry line.
+
+```bash
+python scripts/plan_demo.py --fake
+python scripts/run_calibration_real.py --dataset data/visiona \
+    --intrinsics reports/camera_intrinsics.json --out reports/calibration
+python scripts/plan_demo.py frame.png --intrinsics reports/camera_intrinsics.json \
+    --weights-dir weights --depth-variant indoor \
+    --conformal-depth reports/calibration/depth_interval.json \
+    --fusion-config reports/fusion_tuning/fusion_tuning.json --out-dir reports/demo_plan
+```
+
+For an offline end-to-end check, pass `--fake` together with a `fake`-mode
+artifact (or omit `--conformal-depth`).
 
 ## Every numeric default is TO TUNE ON REAL DATA
 
@@ -117,6 +172,7 @@ in the source file where it is defined.
 | `lookahead_distance_m` | 1.5 m | `planning/guidance.py` |
 | `turn_threshold_deg` | 15 degrees | `planning/guidance.py` |
 | demo `mount_height_m` / `pitch_deg` | 1.4 m / 15 degrees | `scripts/plan_demo.py` |
+| demo `floor_threshold` | 0.90 | `scripts/plan_demo.py` |
 | ablation `user_half_width_m` (truth check) | 0.35 m | `scripts/run_planner_eval.py` |
 
 The calibration thresholds that feed the map (conformal alpha, floor
@@ -128,7 +184,8 @@ starting points only.
 
 All numbers come from analytic scenes and fake backends. Commands:
 `python scripts/run_planner_eval.py --scenes 200 --seed 42` and
-`python -m pytest tests -q`.
+`python -m pytest tests -q`. Generated reports are local (`reports/` is
+gitignored); regenerate them instead of relying on stored artifacts.
 
 - **M8 conformal margin** (stub `q = 0.20`, wall at 4.0 m): the pessimistic
   layer places the wall at 3.2 m (rows 40 -> 32 at res 0.10 m). Planning from
@@ -148,26 +205,25 @@ All numbers come from analytic scenes and fake backends. Commands:
   scenes is 14.0% (see the ablation table below).
 - **M12 ablation** (200 seeded scenes, wall 3.5-6.5 m, 0-2 boxes incl. floating
   overhangs, 3% depth noise, 30% wall-as-floor corruption on odd scenes;
-  runtime 59.6 s < 60 s in the latest run - machine-load dependent and close to
-  the limit):
+  runtime 39.1 s < 60 s in the latest run - machine-load dependent):
 
   | Variant | Unsafe rate (all) | Unsafe (corrupted scenes) | Availability | Mean min clearance | Latency p50/p95 |
   |---|---|---|---|---|---|
-  | A naive | 10.5% [6.5%, 15.0%] | 14.0% [7.0%, 21.0%] | 79.5% | 0.10 m | 36.3 / 57.8 ms |
-  | B + conformal floor | 0.0% | 0.0% | 65.5% | 0.39 m | 28.3 / 41.1 ms |
-  | C + geometric veto | 0.0% | 0.0% | 14.5% | 0.49 m | 20.8 / 39.6 ms |
-  | D + conformal margin (full) | 0.0% | 0.0% | 8.5% | 0.50 m | 51.4 / 105.6 ms |
+  | A naive | 10.5% [6.5%, 15.0%] | 14.0% [7.0%, 21.0%] | 79.5% | 0.10 m | 42.1 / 64.2 ms |
+  | B + conformal floor | 0.0% | 0.0% | 65.5% | 0.39 m | 29.9 / 43.7 ms |
+  | C + geometric veto | 0.0% | 0.0% | 14.5% | 0.49 m | 18.3 / 33.0 ms |
+  | D + conformal margin (full) | 0.0% | 0.0% | 8.5% | 0.50 m | 32.0 / 44.1 ms |
 
   Safety buys availability: the safer variants refuse to guide far more often.
   Availability is measured as the fraction of scenes with decision GUIDE or
   CAUTION; the low C/D numbers are dominated by abstention on the corrupted
   scenes, not by planning failures.
 - **M13 speed and determinism**: median A* latency on a 70 x 75 grid is
-  1.5 ms (limit 50 ms; the ablation's per-scene p50 including map build is
-  20.8-51.4 ms across variants in the latest run); identical inputs and seeds
+  1.7 ms (limit 50 ms; the ablation's per-scene p50 including map build is
+  18.3-42.1 ms across variants in the latest run); identical inputs and seeds
   give identical results (`test_m13_repeat_runs_are_identical`,
-  `test_t10_determinism`). The new mapping/planning test files add 25.6 s to the
-  suite (limit 60 s); the full suite took 134.8 s standalone and 114.9 s inside
+  `test_t10_determinism`). The new mapping/planning test files add 19.5 s to the
+  suite (limit 60 s); the full suite took 136.1 s standalone and 124.9 s inside
   the combined runner - both under the 150 s target, but load-sensitive.
 
 ## Limitations
@@ -207,6 +263,9 @@ All numbers come from analytic scenes and fake backends. Commands:
   inlier ratio, scale status and veto fraction fed to the abstention rule.
 - **Inflation** — marking cells blocked when their clearance is within
   user-half-width plus safety-margin of an obstacle.
+- **Nearest-obstacle telemetry** — the nominal distance and optional conformal
+  lower/upper bounds to the closest BEV-classified obstacle pixel, fed to
+  guidance and abstention.
 - **Octile heuristic** — admissible grid heuristic: cardinal steps cost 1,
   diagonal steps cost sqrt(2).
 - **Pessimistic layer** — the second, lower-bound obstacle vote layer in the

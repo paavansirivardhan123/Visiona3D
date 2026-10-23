@@ -69,10 +69,8 @@ def _bootstrap_metric(
 
     rng = np.random.default_rng(seed)
     n = clean.size
-    means = np.empty(n_resamples, dtype=np.float64)
-    for i in range(n_resamples):
-        sample = rng.choice(clean, size=n, replace=True)
-        means[i] = np.mean(sample)
+    draw_idx = rng.integers(0, n, size=(n_resamples, n))
+    means = clean[draw_idx].mean(axis=1)
 
     ci_low = float(np.percentile(means, 100.0 * (alpha / 2.0)))
     ci_high = float(np.percentile(means, 100.0 * (1.0 - alpha / 2.0)))
@@ -200,8 +198,7 @@ def run_synthetic_ablation(
             if len(wall_pixels) > 0:
                 n_corrupt = int(round(0.30 * len(wall_pixels)))
                 perm = s_rng.choice(len(wall_pixels), size=n_corrupt, replace=False)
-                for py, px in wall_pixels[perm]:
-                    corrupted_labels[py, px] = 1  # Injected false floor!
+                corrupted_labels[wall_pixels[perm, 0], wall_pixels[perm, 1]] = 1
 
         # Probabilities
         probs = np.zeros((H, W, 4), dtype=np.float32)
@@ -381,7 +378,7 @@ def run_synthetic_ablation(
     # Print clean ablation table
     print("\n" + "=" * 105)
     print("SYNTHETIC ONLY: VISIONA-WALK MAPPING & PLANNING ABLATION EVALUATION")
-    print(f"200 Scenes | Wall 3-7m | Overhangs & Ground Boxes | Wall-as-Floor Corruption | Runtime: {total_time:.2f}s")
+    print(f"{n_scenes} Scenes | Wall 3.5-6.5m | Overhangs & Ground Boxes | Wall-as-Floor Corruption | Runtime: {total_time:.2f}s")
     print("=" * 105)
     print(
         f"{'Variant':<22} | {'Unsafe Rate (All)':<22} | {'Unsafe (Corrupted)':<22} | "

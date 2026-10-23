@@ -1,520 +1,259 @@
-<div align="center">
+# Visiona-Walk
 
-# 🦯 Visiona AI
+**An RGB-only wearable navigation aid for blind and low-vision people.**
 
-### Intelligent Assistive Navigation for the Visually Impaired
+Visiona-Walk turns one camera feed into certified free space, metric 3D object
+positions, a bird's-eye occupancy grid, an A* path and spoken guidance. It is a
+single system: capture, segmentation, depth, tracking, mapping, planning,
+guidance, persistence and speech run in one loop and share one frame.
 
-*Real-time object detection · Monocular depth estimation · LLM reasoning · Voice interaction · navigation*
-
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![YOLOv8](https://img.shields.io/badge/YOLOv8n-Ultralytics-8A2BE2?style=flat-square)](https://ultralytics.com)
-![Depth Anything V2](https://img.shields.io/badge/Depth_Anything_V2-HuggingFace-FFD21E?style=flat-square)
-![LangChain](https://img.shields.io/badge/LangChain-Groq_LLaMA3-00A67E?style=flat-square)
-![License](https://img.shields.io/badge/License-MIT-22C55E?style=flat-square)
-
-</div>
+> Every numeric default is `TO TUNE ON REAL DATA`. Nothing here is a validated
+> accuracy or safety claim. The verified runs used route video with an assumed
+> field of view, not a physically calibrated camera or blind participants.
 
 ---
 
-## Overview 🚀
+## What it does
 
-Visiona AI is a real-time assistive navigation platform for blind and visually impaired users. It processes live camera feeds, detects and tracks surrounding objects, estimates distance from a single RGB camera, and delivers concise spoken guidance — entirely hands-free.
+```
+camera/video -> SegFormer floor/wall/obstacle masks
+             -> Depth Anything V2 metric depth
+             -> YOLO11n detections + track IDs
+             -> 3D ground-plane anchors per object
+             -> certified BEV grid (75 x 60 @ 0.1 m)
+             -> conformal obstacle bounds (optional)
+             -> A* path + explore/anchor target
+             -> GUIDE / CAUTION / STOP guidance
+             -> HUD + SQLite session DB + gated speech
+```
 
-Users speak naturally; Visiona listens, reasons, and responds with context-aware audio.
-
-No stereo cameras. No LiDAR. No custom sensors. Just a standard RGB camera and a modern laptop.
+- **Floor and walls:** SegFormer-B0 (ADE20K) merged to floor/wall/obstacle/other;
+  optional MobileSAM refinement. Sky can never become floor.
+- **Objects:** YOLO boxes with track ID, class, confidence, metric distance,
+  lateral offset and a projected 3D anchor.
+- **Map:** free space must be certified. Unknown and uncertain cells are never
+  traversable.
+- **Guidance:** A* over a chamfer costmap; STOP_UNCLEAR when the system cannot
+  certify the floor, STOP_BLOCKED when no path exists.
+- **Persistence:** every session, frame, object anchor, BEV snapshot and
+  announcement is stored in `database/visiona_live.db` (SQLite, stdlib only).
+- **Speech:** priority-gated announcements with cooldowns; STOP overrides.
 
 ---
 
-## Demo Output
+## Quick start
 
-```
-[FRONT] person ahead   →  "Person ahead approaching"
-[FRONT] 6 persons      →  "Group of persons ahead"
-[ALERT] car at 0.8m    →  Beep + "Warning: car ahead coming fast"
-[VOICE] "I need water" →  "Goal water is active. Searching for bottle, cup, sink..."
-```
+Requirements: Python 3.10+, Windows/Linux, a webcam or a video file. CPU-only
+works; a GPU is not required.
 
----
-
-## Features
-
-**🧭 Spatial Awareness**
-- 🔍 Detects 80+ object classes in real time using YOLOv8n
-- 📏 Estimates metric distance using Depth Anything V2 (monocular, no special hardware)
-- 🧷 Tracks objects across frames with a ByteTrack IoU tracker
-- ⚡ Computes per-object speed, motion direction, and time-to-collision
-
-**🔊 Intelligent Audio Guidance**
-- 🗣️ Speaks compact, natural descriptions: "2 persons ahead", "Group of cars left"
-- 📌 Priority queue (max-heap) ensures the most dangerous object is announced first
-- ⚠️ Dynamic threat scoring: distance × object weight × approach speed × TTC (static objects filtered from false alarms)
-- ⏱️ Smart Cooldowns: Strict 7-second ambient cooldowns and 5-second goal repeat intervals
-- 🎯 Step-Based Tracking: Tracks record distances in distinct "steps" to eliminate noise from sensor fluctuation
-- 🌡️ Penalty heatmap prevents one direction from monopolizing audio
-- 🔔 Proximity beep alerts with frequency scaling by distance
-
-**🎙️ Voice Interaction (Push-To-Talk)**
-- Hold `V` to speak a general command or question
-- Hold `R` to engage "Remember Mode" — point the camera at any custom object/person to capture exact image data
-- Zero-latency mic pre-warming — no activation delay
-- Audio ducking: speech volume lowers while the mic is open
-
-**🧠 LLM Reasoning (Groq LLaMA 3.3 70B)**
-- Routes voice commands to the correct tool automatically
-- Answers questions about the current scene and recent activity
-- Sets persistent goals ("I need water") and proactively alerts when relevant objects appear
-- Contextual Arrival: Generates comforting, environment-aware guidance when you reach your destination (<= 1 step)
-- Confirmation system asks before executing ambiguous requests
-- Graceful offline fallback when the API key is missing
-
-**🗂️ Memory System**
-- 15-minute rolling visual memory of detected objects
-- Custom object labeling: "This is my water bottle" saved as an alias
-- **Real-Time Object "Training"**: Mathematical MobileNetV3 vector embeddings immediately swap generic YOLO labels (e.g. "person") for your custom aliases (e.g. "Paavan") on-the-fly, requiring zero fine-tuning epochs and fully avoiding catastrophic forgetting
-- Goal system tracks user needs and scans for matching items
-
-**🧭 Navigation**
-- Returns step-by-step instructions as spoken audio
-
-**📷 Multi-Camera Support**
-- Up to 4 directional feeds: FRONT, LEFT, RIGHT, BACK
-- Unified 2x2 grid HUD display
-- Each feed processed independently with a shared YOLO model
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Object Detection | YOLOv8n (Ultralytics) |
-| Depth Estimation | Depth Anything V2 Small (HuggingFace Transformers) |
-| Object Tracking | ByteTrack (IoU-based, pure NumPy) |
-| Noise Reduction | 1D Kalman Filter (per-track) |
-| Egomotion Detection | Optical Flow (OpenCV) |
-| LLM Reasoning | Groq API — LLaMA 3.3 70B Versatile |
-| Agent Framework | LangChain Core (tool binding) |
-| Text-to-Speech | pyttsx3 (SAPI5, offline) |
-| Speech Recognition | SpeechRecognition + PyAudio |
-| Keyboard Listener | pynput |
-| Video Processing | OpenCV |
-| Deep Learning | PyTorch |
-| Custom Recognition | MobileNetV3 Vector Embeddings (torchvision / Cosine Similarity) |
-| Package Management | uv (Python package installer) |
-
----
-
-## Project Structure
-
-```
-Visiona3D/
-├── main.py                         Entry point — camera feeds, main loop, PTT
-├── core/
-│   ├── config.py                   All settings + geometry dataclasses (single source of truth)
-│   ├── detection.py                Detection dataclass with threat_score property
-│   ├── priority_queue.py           Max-heap priority queue
-│   ├── memory.py                   VisionMemory (15-min rolling) + GoalSystem
-├── perception/
-│   ├── vision.py                   YOLO + async depth pipeline
-│   ├── mono_depth.py               Depth Anything V2 inference + calibration
-│   ├── tracker.py                  ByteTrack IoU tracker with Kalman per track
-│   └── egomotion.py                Optical flow user motion detection
-├── kinematics/
-│   ├── heatmap.py                  Object grouping + speech message builder
-│   ├── speed.py                    Speed estimation + motion classification
-│   ├── ttc.py                      Time-To-Collision calculator (EMA smoothed)
-│   └── kalman.py                   1D Kalman filter for depth noise reduction
-├── geometry/
-│   ├── camera.py                   Pinhole projection and backprojection
-│   ├── frames.py                   Camera ↔ ground frame transformations
-│   ├── ground_plane.py             RANSAC + PCA ground plane fitting
-│   ├── scale.py                    Temporal scale estimation (EMA + outlier rejection)
-│   ├── lift.py                     Point-cloud lifting and 3D object anchors
-│   └── notation.md                 Coordinate system conventions and math reference
-├── audio/
-│   ├── speech.py                   Priority TTS queue + ducking + emergency bypass
-│   ├── voice_input.py              Zero-latency PTT mic capture
-│   └── alert.py                    Proximity beep alerts (pauseable)
-├── agents/
-│   ├── orchestrator.py             LangChain agent engine + confirmation system
-│   └── tools/
-│       └── vision_tools.py         9 LangChain tools (memory, search, goals)
-├── services/
-│   └── vector_db.py                Object signature storage (placeholder)
-├── tests/                          Test suite for geometry module (22 tests)
-├── sample-vid/                     Test video files
-├── yolov8n.pt                      YOLO model weights
-├── pyproject.toml                  Dependencies (managed with uv)
-├── .env                            API keys (not committed)
-└── .env.example                    Template for .env
+```powershell
+cd E:\git_projects\Projects\Visiona3D
+.\.venv\Scripts\Activate.ps1
 ```
 
----
+Dependencies are pinned in `pyproject.toml`. If the venv is not ready:
 
-## System Workflow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  STAGE 1 — Input Capture                                    │
-│                                                             │
-│  • CameraFeed reads frames from up to 4 video sources       │
-│  • Frames resized to 1280px wide for YOLO processing        │
-│  • Each direction (FRONT / LEFT / RIGHT / BACK) runs        │
-│    independently in its own thread                          │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STAGE 2 — Object Detection          perception/vision.py   │
-│                                                             │
-│  • YOLOv8n detects 80+ object classes (~50ms on CPU)        │
-│  • Bounding boxes scaled to display coordinates             │
-│  • Depth Anything V2 runs in background thread (~300ms)     │
-│  • Cached depth applied immediately; heuristic fallback     │
-│    used until depth model warms up                          │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STAGE 3 — Tracking + Kinematics     perception/tracker.py  │
-│                                      perception/egomotion.py│
-│                                      kinematics/            │
-│  • ByteTrack assigns persistent IDs via IoU matching        │
-│  • Optical Flow detects user motion (walking/stationary)    │
-│  • Egomotion compensation: distinguishes true object motion │
-│    from camera movement (e.g. user walking forward)         │
-│  • FeatureDB extracts crop embeddings & hot-swaps custom    │
-│    labels (e.g. "person" -> "Paavan") via Cosine Sim        │
-│  • Kalman filter smooths depth per track, rejects spikes    │
-│  • Speed = ΔDistance / ΔTime  (metres per second)           │
-│  • Motion classification: approaching/receding/lateral      │
-│    (compensated for user movement)                          │
-│  • TTC  = Distance / Speed    (EMA smoothed)                │
-│  • threat_score = distance × weight + speed + TTC bonus     │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STAGE 4 — Priority + Grouping       core/priority_queue.py │
-│                                      kinematics/heatmap.py  │
-│  • Max-heap sorts by: TTC → distance → object type          │
-│  • Penalty heatmap prevents one direction dominating audio  │
-│  • Groups objects: "Group of persons ahead" / "2 cars left" │
-│  • Enforces 7-second ambient and 5-second goal cooldowns    │
-│  • Emergency TTC bypass always speaks critical warnings     │
-│    (Filters out static objects to prevent false alarms)     │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STAGE 5 — Output                    audio/                 │
-│                                                             │
-│  • SpeechEngine: priority queue, ducking, emergency bypass  │
-│  • AlertSystem: proximity beeps, frequency scales by dist   │
-│  • HUD: state badge, bounding boxes, TTC warning rings      │
-│  • SessionLogger: full JSONL telemetry saved per session    │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  STAGE 6 — Voice + LLM               audio/voice_input.py   │
-│                                      agents/orchestrator.py │
-│  • Hold V / G → PyAudio pre-warmed stream (zero latency)    │
-│  • SpeechRecognition → Google STT → plain text              │
-│  • AgentEngine routes to the right LangChain tool:          │
-│      query_past_detections  →  15-min visual memory         │
-│      set_search_intent      →  YOLO target seeking          │
-│      set_persistent_goal    →  proactive object scanning    │
-│      save_object_signature  →  custom object labeling       │
-│  • Groq LLaMA 3.3 70B synthesizes final spoken response     │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Installation
-
-**1. Clone the repository**
-
-```bash
-git clone https://github.com/yourname/visiona.git
-cd visiona
-```
-
-**2. Install dependencies**
-
-```bash
-pip install uv
+```powershell
+python -m pip install uv
 uv sync
 ```
 
-> All dependencies are pinned in `pyproject.toml`. Key packages:
-> `ultralytics` · `transformers` · `torch` · `opencv-python` · `langchain-groq` · `pyttsx3` · `SpeechRecognition` · `pyaudio` · `pynput`
+Fetch the model weights once (no network after that):
 
-**3. Configure API keys**
-
-```bash
-cp .env.example .env
+```powershell
+python scripts\fetch_models.py --dry-run
+python scripts\fetch_models.py --yes
 ```
 
-Edit `.env`:
+### Run on a video file (works immediately)
 
-```env
-GROQ_API_KEY="your_groq_api_key_here"
+```powershell
+python scripts\live_demo.py --source sample-vid\FRONT\VID2.mp4 --hfov 70 --profile fast --max-frames 4 --headless --out-video reports\live_demo\live.mp4 --no-speech --summary-json reports\live_demo\summary.json
 ```
 
-- Free Groq key: [console.groq.com](https://console.groq.com)
-- Both are optional. The system runs without them using offline fallbacks.
+### Run on a webcam (demo intrinsics, distances are estimates)
 
-**4. Run**
+```powershell
+python scripts\live_demo.py --source 0 --hfov 70
+```
 
-```bash
+`q` quits, `s` toggles speech. The red HUD banner means the field of view is
+assumed, not measured.
+
+### Run with calibrated intrinsics (metric mode)
+
+```powershell
+python scripts\capture_calibration.py --camera 0 --out calib --board 9x6 --views 15
+python scripts\calibrate_camera.py --images calib --board 9x6 --square 0.018 --out reports\camera_intrinsics.json
+python scripts\live_demo.py --source 0 --intrinsics reports\camera_intrinsics.json
+```
+
+Capture at the resolution you will run at. Intrinsics for a different
+resolution are rejected; the runner never rescales a guessed field of view.
+
+---
+
+## What you see
+
+| Region | Contents |
+| --- | --- |
+| Camera view | 45% blended floor/wall/obstacle masks, YOLO boxes with `#track class conf distance lateral`, projected 3D anchor points |
+| Top bar | per-stage status (seg, depth, det, plane, scale, certification), processing size and profile |
+| Bottom bar | decision, heading, certified nearest obstacle with bearing and optional lower bound, frame age, process time, FPS, DB session |
+| Right panel | 75 x 60 BEV, forward up: free / occupied / uncertain / unknown, A* path, target cross, robot triangle |
+
+The HUD draws only on the exact frame that produced the masks and anchors. It
+shows frame age so latency is visible instead of hidden.
+
+---
+
+## Project layout
+
+One repository, one entry point (`scripts/live_demo.py`), one database.
+
+```
+Visiona3D/
+  scripts/live_demo.py       product entry point: live/video -> HUD -> DB -> speech
+  live/                      runner, synchronisation, HUD, anchors, SQLite, speech bridge
+  perception/                SegFormer, Depth Anything V2, YOLO, pipeline, fusion, tracker
+  geometry/                  camera model, frames, scale, lifting
+  calibration/               intrinsics, abstention, conformal depth config
+  mapping/                   BEV grid, certified floor, obstacles, rolling map
+  planning/                  costmap, A*, targets, smoothing, guidance
+  audio/                     speech engine and priority queue
+  core/                      config, detection types, memory
+  agents/, services/         legacy assistant modules used by the old app
+  kinematics/, evaluation/
+  dataset/, audit/
+  scripts/                   fetch, smoke, evaluation, calibration, demos
+  tests/                     offline tests (numpy/pytest/stdlib only)
+  docs/                      component and operating documentation
+  main.py                    LEGACY app (original YOLO/TTS loop), kept read-only
+  weights/, sample-vid/,     local only, gitignored
+  data/, calib/
+  database/, logs/, reports/ runtime artifacts, gitignored and safe to delete
+```
+
+The old `main.py` app is retained as a read-only reference and shares `core/`,
+`perception/` and `audio/` with the live system. It is not the product entry
+point.
+
+---
+
+## Configuration
+
+```powershell
+--profile fast|balanced|quality     model input sizes (not safety rules)
+--proc-width 640                    processing width cap
+--goal-class chair                  route to the nearest detected object instead
+--fusion-config path.json           optional SegFormer + MobileSAM tuning
+--conformal-depth path.json         optional pessimistic obstacle bounds
+--no-speech --no-speak-objects      mute audio (events are still logged)
+--no-db                             disable persistence
+--headless --out-video out.mp4      write the annotated HUD instead of a window
+--start-frame 100 --max-frames 20 --loop --no-realtime
+--camera-width 1280 --camera-height 720
+```
+
+Mount defaults (`--mount-height 1.4`, `--pitch 15`) and `--floor-threshold 0.90`
+are `TO TUNE ON REAL DATA`.
+
+---
+
+## Persistence
+
+```powershell
+python -c "import sqlite3;c=sqlite3.connect('database/visiona_live.db');print(c.execute('select class_name,round(distance_m,2),round(anchor_x,2),round(anchor_y,2),round(anchor_z,2) from object_registry order by distance_m').fetchall())"
+```
+
+Tables: `sessions`, `frames`, `objects`, `object_registry`, `bev_snapshots`,
+`events`. The schema version is checked on open; a mismatch raises instead of
+silently reading old columns.
+
+---
+
+## Performance (measured, not promised)
+
+On the bundled 1920x1080 route video at 640x360, CPU only (12 logical cores,
+torch 10 threads, no CUDA), warm frames:
+
+| Stage | Time |
+| --- | --- |
+| SegFormer (256 input) | 0.16 - 0.26 s |
+| Depth Anything V2 (266 input) | 0.49 - 0.80 s |
+| YOLO11n | 0.13 - 0.17 s |
+| ground lift | 0.41 - 0.57 s |
+| **total per processed frame** | **1.23 - 2.45 s** |
+
+That is roughly 0.5-0.8 HUD updates per second. The display stays responsive and
+shows the latest processed frame; stale frames are dropped, never queued. To go
+faster: `--proc-width 480 --profile fast`, or run the backends on a GPU. The
+first frame additionally includes model loading.
+
+---
+
+## Safety guarantees
+
+1. Free space must be certified; unknown/uncertain cells are not traversable.
+2. Obstacles use the conformal lower-bound distance when an interval artifact is
+   supplied; otherwise no lower bound is invented.
+3. Every failed stage becomes a status and a STOP/NO_PERCEPTION decision, not an
+   exception in the loop.
+4. The planner recommends; it never claims that a path is safe.
+5. Uncalibrated intrinsics are labelled in the HUD and in the session row.
+
+---
+
+## Tests and verification
+
+No model, camera, network or TTS engine is used in tests.
+
+```powershell
+python -m pytest tests audio -q
+python geometry\scripts\run_checks.py
+```
+
+Latest full run: `294 passed, 1 warning, 14 subtests passed` and all geometry,
+perception, mapping and planning checks passed. Synthetic results are regenerated
+by `python scripts\run_planner_eval.py --scenes 200 --seed 42`; report artifacts
+are local and not committed.
+
+---
+
+## Limitations
+
+- Not field-tested on a physical camera or with blind users.
+- 2.5D grid, not a mesh: BEV plus one 3D anchor per object.
+- No odometry fusion in the live loop; each frame produces its own grid.
+- Monocular depth bias is uncorrected.
+- CPU-only HUD rate is about 0.5-0.8 Hz on the test machine.
+- No regulatory or safety certification.
+
+---
+
+## Documentation
+
+- [`docs/live_system.md`](docs/live_system.md) - operating guide, synchronisation,
+  database schema, measured latency, limitations.
+- [`docs/perception_backends.md`](docs/perception_backends.md) - models, fusion
+  rules, evaluation and tuning.
+- [`docs/mapping_planning.md`](docs/mapping_planning.md) - grid conventions,
+  certification, planner and guidance.
+- [`docs/annotation_guide.md`](docs/annotation_guide.md) and
+  [`docs/capture_protocol.md`](docs/capture_protocol.md) - data collection.
+
+## Legacy app
+
+`main.py` is the original live app (YOLO + MiDaS + TTS + LangChain assistant).
+It still runs, but it is not connected to the safety stack and is kept only as a
+reference:
+
+```powershell
 python main.py
 ```
 
-> On first run, Depth Anything V2 downloads ~100MB of model weights (cached after that).
-
-The default config uses `sample-vid/sample3.mp4`. To use a live webcam, set `SOURCES = {"FRONT": 0}` in `core/config.py`.
-
-> Windows note: If `pyaudio` fails, run `pip install pipwin && pipwin install pyaudio`
+Its optional `GROQ_API_KEY` in `.env` is not required by the live system.
 
 ---
-
-## Usage
-
-### Controls
-
-| Key | Action |
-|---|---|
-| Hold `V` | Open mic for general AI command or question |
-| Hold `R` | Open mic for Remember Mode to capture and learn custom objects |
-| `ESC` | Quit |
-
-### Voice Commands
-
-| Say this | What happens |
-|---|---|
-| "find chair" | YOLO starts searching for a chair |
-| "I need water" | Sets persistent goal, searches for bottle/cup/sink |
-| "where is the exit?" | Searches for door/stairs |
-| "what is around me?" | Describes current scene |
-| "take me to the pharmacy" | walking directions |
-| "this is my water bottle" | Labels the nearest bottle in memory |
-| "where did I leave my keys?" | Searches 15-minute visual memory |
-| Any question | Routed to LLM with full scene context |
-
-### Configuration
-
-All settings in `core/config.py`:
-
-```python
-# Video sources — use integer index for live cameras
-SOURCES = {
-    "FRONT": 0,      # webcam
-    "LEFT":  None,   # disabled
-}
-
-# Distance zones
-CONSIDER_MAX_M  = 5.25    # only describe objects within this range
-HIGH_PRIORITY_M = 1.125   # triggers beep + priority alert
-
-# Speech
-SEMANTIC_COOLDOWN = 5.0   # seconds between repeated normal announcements
-SPEECH_COOLDOWN   = 2.5   # seconds between repeated warnings
-
-# Depth model
-DEPTH_MODEL_ID = "depth-anything/Depth-Anything-V2-Small-hf"
-```
-
----
-
-## How It Works
-
-### Depth Estimation
-
-Depth Anything V2 outputs relative inverse depth — higher values mean closer objects. Converted to metric metres:
-
-```
-metric_depth_m = (scale / depth_value) x 2.0
-```
-
-Scale is auto-calibrated on first frame using detected reference objects via the pinhole camera model.
-
-### Threat Scoring
-
-```python
-score = (10.0 - distance_m) x object_weight
-      + speed_mps x 20       # if approaching
-      + 100.0                 # if TTC <= 3.5 seconds
-```
-
-Objects above `THREAT_HIGH_THRESHOLD = 50.0` trigger beep alerts and priority speech.
-
-### Priority Queue
-
-Max-heap sorted by three factors:
-
-1. TTC — `1000 / ttc_sec` (lower TTC = highest urgency)
-2. Distance — `(CONSIDER_MAX_M - distance_m) x 10`
-3. Object type — `OBJECT_PRIORITY` weight
-
-### Penalty Heatmap
-
-After speaking about a direction, a penalty of 30 points is applied to it. Penalties decay at 3 points/second. This prevents the system from repeatedly announcing the same direction and ensures all directions get coverage.
-
-### LLM Agent
-
-1. Voice command arrives via PTT
-2. LLM decides which tool(s) to call
-3. If intent is ambiguous, asks "Asking for [intent]?" before executing
-4. Tools execute (memory lookup, YOLO search, goal setting)
-5. LLM synthesizes a single spoken response from tool results
-
----
-
-## Key Design Decisions
-
-**Async depth pipeline** — Depth Anything V2 runs in a background thread. The main loop never waits for it. This keeps video smooth at 30+ FPS while depth updates at ~3 FPS.
-
-**YOLO on 1280px, not 4K** — Running YOLO on a 4K frame produces zero detections because objects are too small after internal downscaling. Resizing to 1280px first gives YOLO enough detail while being 4x faster.
-
-**Zero-latency PTT** — The microphone stream is pre-warmed at startup. When the user presses V, recording starts instantly with no activation delay.
-
-**Emergency speech bypass** — Critical alerts (vehicle < 2.5m, person < 1.0m) bypass the ducking system and play at full volume even while the mic is open.
-
-**Offline-first design** — Every component has a graceful fallback. No API key means LLM disabled with direct scene description used. Depth model failure means heuristic bounding-box estimation. No mic means keyboard controls still work.
-
----
-
-## Session Logs
-
-Every session saved to `logs/session_YYYYMMDD_HHMMSS.jsonl`:
-
-```json
-{"event": "detection", "direction": "FRONT", "objects": [
-  {"object": "person", "direction": "FRONT", "mode": "monocular",
-   "distance_m": 1.4, "speed_mps": 0.8, "motion": "approaching",
-   "ttc_sec": 1.8, "priority": "high"}
-], "t": 4.21}
-{"event": "speech", "messages": ["Warning: person ahead coming fast"], "t": 4.22}
-```
-
----
-
-## Perception Interfaces (Research)
-
-The research perception stack wraps real models behind swappable interfaces and
-runs every test on analytic fakes — no model, camera, video file or network.
-
-- **Interfaces:** `perception/interfaces.py` defines `SegOutput`, `DepthOutput`,
-  `Det2D`, `FrameOutputs` and backend Protocols with explicit `validate()` checks.
-- **Fakes:** `perception/fakes.py` renders the analytic scene and applies seeded
-  corruptions (depth scale `k`, noise, outliers, floor-as-wall and wall-as-floor
-  labels, dropped detections). Perfect fakes give metric-correct wall distance on
-  the first frame.
-- **Pipeline:** `perception/pipeline.py` runs segmentation → depth → detection →
-  ground-plane lift with per-stage timings. Backend failures become status codes
-  instead of exceptions.
-- **Real wrappers:** SegFormer-B0 (ADE20K), Depth Anything V2 Metric
-  Indoor/Outdoor Small, and YOLO11-nano. Heavy libraries are imported lazily and
-  weights are loaded from local/cached files only.
-- **Tools:** `scripts/calibrate_camera.py` (checkerboard intrinsics),
-  `scripts/fetch_models.py` (manifest + dry run), and
-  `scripts/real_models_smoke.py` (real or `--fake` smoke test with PNG overlays).
-- **Docs:** `docs/perception_backends.md` lists model IDs, sizes, class-map rules
-  and fetch/smoke commands.
-
-```bash
-python -m pytest tests audio -q
-python geometry/scripts/run_checks.py
-python scripts/fetch_models.py --dry-run
-python scripts/real_models_smoke.py --images path/to/stills --fake
-```
-
----
-
-## Mapping and Planning (Research)
-
-The research mapping and planning layer turns one frame's depth, floor
-segmentation and calibration outputs into a ground-frame occupancy map, a
-costmap, a recommended path and a guidance decision. All automated results are
-**synthetic only** (analytic scenes, fake backends); every numeric default is
-labelled `TO TUNE ON REAL DATA` in code and in `docs/mapping_planning.md`.
-
-Safety principles enforced in the code:
-
-1. Free space must be certified. Unknown and uncertain cells are NOT traversable.
-2. Obstacles are placed at their conformal LOWER-BOUND distance (pessimistic layer), as well as nominal.
-3. Any failure gives a status (STOP_UNCLEAR or STOP_BLOCKED) and never an exception.
-4. The planner only recommends; it never claims the path is safe.
-
-- **Map:** `mapping/grid.py` (cell conventions), `mapping/bev.py` (certified
-  BEV votes, overhang height band, pessimistic lower-bound layer),
-  `mapping/rolling.py` (decayed, odometry-warped fusion - synthetic motion only).
-- **Planner:** `planning/costmap.py` (chamfer clearance + inflation),
-  `planning/astar.py` (octile A*, no corner cutting, status codes),
-  `planning/targets.py` (explore/anchor/multi-path), `planning/smooth.py`
-  (collision re-validating smoothing with raw-path fallback),
-  `planning/guidance.py` (GUIDE / CAUTION / STOP_UNCLEAR / STOP_BLOCKED with
-  reasons and abstention features).
-- **Measured (SYNTHETIC ONLY):** naive planning is unsafe on 14.0% of
-  wall-as-floor-corrupted scenes; adding conformal floor certification,
-  geometric veto and the lower-bound margin takes the unsafe rate to 0.0% at
-  the cost of availability (79.5% -> 8.5%). A see-through glass pane is never
-  certified free (0 of 630 footprint cells) and the recommended path keeps a
-  0.45 m stand-off. Median per-scene planning latency across variants is
-  20.8-51.4 ms in the latest synthetic run (machine-load dependent); A* alone on
-  the 70 x 75 grid has a 1.5 ms median.
-  Full table with bootstrap CIs: `reports/planner_eval/ablation_results.json`.
-- **Demo and evaluation:** `scripts/plan_demo.py --fake` (writes a BEV PNG with
-  the path overlay and a guidance JSON; exits 2 with a fetch hint when real
-  weights are missing) and `scripts/run_planner_eval.py` (200-scene synthetic
-  ablation, refuses fewer than 20 scenes).
-- **Docs:** `docs/mapping_planning.md` (definitions, safety principles, every
-  default, limitations, glossary).
-
----
-
-## Roadmap
-
-- [x] YOLOv8n real-time detection (4 camera feeds)
-- [x] Depth Anything V2 monocular depth estimation
-- [x] Auto scale calibration from reference objects
-- [x] ByteTrack object tracking with Kalman filter
-- [x] Optical flow egomotion detection
-- [x] Motion compensation (user movement vs object movement)
-- [x] Speed + motion classification (approaching/receding/lateral)
-- [x] Time-To-Collision calculation
-- [x] Max-heap priority queue (TTC → distance → type)
-- [x] Dynamic threat scoring + penalty heatmap
-- [x] Priority TTS queue with ducking + emergency bypass
-- [x] Zero-latency PTT voice input
-- [x] LangChain agent with 9 tools (Groq LLaMA 3.3 70B)
-- [x] 15-minute visual memory + custom object labeling
-- [x] MobileNetV3 vector embeddings for custom object recognition
-- [x] Real-time label swapping (zero fine-tuning, no catastrophic forgetting)
-- [x] Persistent goal system (proactive scanning)
-- [x] Session logging (JSONL telemetry)
-- [x] Remember Mode (R key) - capture and learn custom objects/people
-- [x] Contextual curiosity (proactive assistance suggestions)
-- [x] Busy road detection (vehicle density warnings)
-- [x] Emergency verbal bypass (critical alerts override mic input)
-- [x] Contextual goal arrival notifications & LLM guidance
-- [x] Step-based spatial tracking for noise elimination
-- [ ] 3D Objectization and segmentation
-- [x] Bird's-eye occupancy map with certified free space (synthetic evaluation)
-- [x] Conformal lower-bound obstacle margin and pessimistic map layer (synthetic)
-- [x] A* planner, target selection, smoothing and guidance decisions (synthetic)
-
-
-## Author
 
 **Author:** Paavan Siri Vardhan Narava
-**Email:** naravapaavansirivardhan@gmail.com
- 
----
-
-<div align="center">
-Built to make the world navigable for everyone.
-</div>

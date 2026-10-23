@@ -8,9 +8,26 @@ ENV/
 env/
 .env
 
-# Models
+# Models and weights (fetched locally)
 *.pt
 *.pth
+weights/
+
+# Vendored third-party dependency (MobileSAM clone)
+MobileSAM/
+
+# Local capture inputs and calibration attempts
+data/
+calib/
+calib_target/
+
+# Runtime artifacts
+logs/
+*.log
+database/
+reports/
+geometry/reports/
+conversation_log.txt
 
 # IDEs
 .vscode/
@@ -19,10 +36,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
-
-# Logs
-logs/
-*.log
 
 # Coverage
 .early.coverage
@@ -38,5 +51,3 @@ logs/
 
 # Sample videos - local only
 sample-vid/
-
-conversation_log.txt

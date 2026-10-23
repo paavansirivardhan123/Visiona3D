@@ -76,6 +76,11 @@ def test_m2_bev_wall_at_four_metres_gives_occupied_band():
     wall_band_occupied = any(bev.grid[r, c_center] == CELL_OCCUPIED for r in (44, 45, 46))
     assert wall_band_occupied, f"Expected occupied cell near row 45, got rows: {[bev.grid[r, c_center] for r in (44, 45, 46)]}"
 
+    # The pixel mask used for certified obstacle telemetry excludes floor.
+    assert bev.obstacle_mask.shape == labels.shape
+    assert bev.obstacle_mask[wall_mask].any()
+    assert not bev.obstacle_mask[floor_mask].any()
+
 
 def test_m2_bev_box_footprint_within_one_cell():
     """M2: Box at known G position gives occupied cells covering its footprint within one cell."""

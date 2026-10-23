@@ -14,8 +14,10 @@ Usage (deterministic synthetic backend; no models, camera, network)::
 
 The real backend predicts depth at each annotated ``DistancePoint`` using the
 median of a 5x5 patch.  It then performs leave-one-route-out split-conformal
-calibration.  Predictions are written to ``predictions.jsonl`` and all
-aggregate results to ``calibration_report.json``.
+calibration.  Predictions are written to ``predictions.jsonl``, aggregate
+results to ``calibration_report.json``, and the pooled fitted model to
+``depth_interval.json`` with real/fake provenance for runtime obstacle
+lower bounds.
 
 Scope labels in the report are deliberate: ``calibration_set`` metrics are
 in-sample and optimistic; ``held_out`` metrics are the out-of-fold numbers on
@@ -40,6 +42,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from calibration.conformal_depth import ConformalDepth, DEFAULT_ALPHA
+from calibration.depth_interval_config import RuntimeDepthInterval
 from calibration.conformal_floor import (
     DEFAULT_DELTA,
     DEFAULT_LAMBDA_GRID,
@@ -847,8 +850,14 @@ def run(
     full_model = ConformalDepth(alpha=alpha).fit(
         _point_arrays(points, "pred_m"), _point_arrays(points, "gt_m")
     )
-    (out / "conformal_depth.json").write_text(
-        json.dumps(full_model.to_dict(), indent=2), encoding="utf-8"
+    depth_interval = RuntimeDepthInterval(
+        model=full_model,
+        mode="fake" if fake else "real",
+        source="scripts/run_calibration_real.py",
+        generated=datetime.datetime.now().isoformat(),
+    )
+    (out / "depth_interval.json").write_text(
+        json.dumps(depth_interval.to_dict(), indent=2), encoding="utf-8"
     )
 
     with (out / "predictions.jsonl").open("w", encoding="utf-8") as handle:
@@ -935,7 +944,7 @@ def run(
         "files": {
             "predictions_jsonl": str(out / "predictions.jsonl"),
             "report_json": str(out / "calibration_report.json"),
-            "conformal_depth_json": str(out / "conformal_depth.json"),
+            "depth_interval_json": str(out / "depth_interval.json"),
         },
         "warnings": warnings,
         "model_errors": model_errors,
