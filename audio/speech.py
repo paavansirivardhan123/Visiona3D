@@ -117,13 +117,6 @@ class SpeechEngine:
                     delay = scheduled_time - current_time
                     time.sleep(delay)
 
-            from datetime import datetime
-            try:
-                with open("conversation_log.txt", "a", encoding="utf-8") as f:
-                    f.write(f"SYSTEM SPEECH ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}): {text}\n")
-            except Exception:
-                pass
-
             if self.engine:
                 try:
                     # If it's an emergency, force volume to 100% even if ducked
@@ -206,6 +199,18 @@ class SpeechEngine:
             except queue.Empty: break
 
     def stop(self):
+        """End the worker and release the SAPI loop (shutdown only)."""
         self._running = False
+        self._flush_all()
+        if self.engine is not None:
+            try:
+                self.engine.stop()
+            except Exception:
+                pass
+            try:
+                if getattr(self.engine, "_inLoop", False):
+                    self.engine.endLoop()
+            except Exception:
+                pass
         self._pq.put(None)
         self._nq.put(None)

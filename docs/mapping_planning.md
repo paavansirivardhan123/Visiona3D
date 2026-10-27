@@ -1,6 +1,6 @@
 # Bird's-eye map, planner and guidance
 
-Mapping and planning layer for Visiona-Walk (project "Vishnu 3D"): it turns one
+Mapping and planning layer for Visiona3D: it turns one
 monocular frame's depth, floor segmentation and calibration outputs into a
 ground-frame occupancy map, a costmap, a recommended path and a guidance
 decision. Every automated result in this repo is **SYNTHETIC ONLY** (analytic

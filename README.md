@@ -1,231 +1,429 @@
-# Visiona-Walk
+# Visiona3D
 
-**An RGB-only wearable navigation aid for blind and low-vision people.**
+**Spoken navigation from one ordinary RGB camera.**
 
-Visiona-Walk turns one camera feed into certified free space, metric 3D object
-positions, a bird's-eye occupancy grid, an A* path and spoken guidance. It is a
-single system: capture, segmentation, depth, tracking, mapping, planning,
-guidance, persistence and speech run in one loop and share one frame.
+Visiona3D looks at the camera image, finds the floor, walls and objects, maps
+them in 3D, plans a path and speaks short guidance. It needs no special camera
+and no depth sensor. Navigation runs offline after setup. Spoken goals are
+optional: speech-to-text uses Google's speech service, and the transcript can
+be understood by Gemini Flash when `GEMINI_API_KEY` is set, or by the built-in
+local parser with no key at all.
 
-> Every numeric default is `TO TUNE ON REAL DATA`. Nothing here is a validated
-> accuracy or safety claim. The verified runs used route video with an assumed
-> field of view, not a physically calibrated camera or blind participants.
-
----
-
-## What it does
-
-```
-camera/video -> SegFormer floor/wall/obstacle masks
-             -> Depth Anything V2 metric depth
-             -> YOLO11n detections + track IDs
-             -> 3D ground-plane anchors per object
-             -> certified BEV grid (75 x 60 @ 0.1 m)
-             -> conformal obstacle bounds (optional)
-             -> A* path + explore/anchor target
-             -> GUIDE / CAUTION / STOP guidance
-             -> HUD + SQLite session DB + gated speech
-```
-
-- **Floor and walls:** SegFormer-B0 (ADE20K) merged to floor/wall/obstacle/other;
-  optional MobileSAM refinement. Sky can never become floor.
-- **Objects:** YOLO boxes with track ID, class, confidence, metric distance,
-  lateral offset and a projected 3D anchor.
-- **Map:** free space must be certified. Unknown and uncertain cells are never
-  traversable.
-- **Guidance:** A* over a chamfer costmap; STOP_UNCLEAR when the system cannot
-  certify the floor, STOP_BLOCKED when no path exists.
-- **Persistence:** every session, frame, object anchor, BEV snapshot and
-  announcement is stored in `database/visiona_live.db` (SQLite, stdlib only).
-- **Speech:** priority-gated announcements with cooldowns; STOP overrides.
+> Every number in this project is a starting value marked `TO TUNE ON REAL
+> DATA`. Visiona3D is a working prototype, not a certified safety device or a
+> replacement for a cane or guide dog.
 
 ---
 
-## Quick start
+## Start here (first time)
 
-Requirements: Python 3.10+, Windows/Linux, a webcam or a video file. CPU-only
-works; a GPU is not required.
+You need a Windows or Linux computer, Python 3.11 or 3.12, and a webcam or a
+video file. A GPU is not required.
+
+### Step 1 - install once
+
+Open PowerShell in the project folder:
 
 ```powershell
 cd E:\git_projects\Projects\Visiona3D
+python -m pip install uv
+uv sync
 .\.venv\Scripts\Activate.ps1
 ```
 
-Dependencies are pinned in `pyproject.toml`. If the venv is not ready:
+### Step 2 - download the models once
+
+This is a one-time download of roughly a few hundred MB. After it finishes,
+Visiona3D runs offline.
 
 ```powershell
-python -m pip install uv
-uv sync
-```
-
-Fetch the model weights once (no network after that):
-
-```powershell
-python scripts\fetch_models.py --dry-run
 python scripts\fetch_models.py --yes
 ```
 
-### Run on a video file (works immediately)
+### Step 3 - start
 
 ```powershell
-python scripts\live_demo.py --source sample-vid\FRONT\VID2.mp4 --hfov 70 --profile fast --max-frames 4 --headless --out-video reports\live_demo\live.mp4 --no-speech --summary-json reports\live_demo\summary.json
+python starter.py
 ```
 
-### Run on a webcam (demo intrinsics, distances are estimates)
+A short menu appears. **Press Enter.** That starts the webcam with sensible
+defaults. Nothing else is required on the first run.
+
+The first start can take up to about a minute while the models load. After
+that, a window opens with the camera view, coloured floor and wall areas,
+boxes around objects, a small map on the right, and spoken guidance.
+
+To stop, click the picture and press **q**.
+
+If you are blind or cannot read the menu, just press Enter: the webcam starts
+and guidance is spoken. A helper only needs to launch the command once. To skip
+the menu entirely, use this one-line start:
 
 ```powershell
-python scripts\live_demo.py --source 0 --hfov 70
+python starter.py --source 0 --hfov 70
 ```
 
-`q` quits, `s` toggles speech. The red HUD banner means the field of view is
-assumed, not measured.
+---
 
-### Run with calibrated intrinsics (metric mode)
+## The menu, explained
+
+```
+======================= Visiona3D =======================
+ 1) Start with my webcam             (recommended)
+ 2) Start with a video file
+ 3) Advanced options and calibration
+ 0) Exit
+=========================================================
+```
+
+| Choice | What happens | What you must know |
+| --- | --- | --- |
+| `1` or Enter | Starts the webcam immediately | Distances are estimates until the camera is calibrated |
+| `2` | Asks for a video file, then starts | Drag the file into the window and press Enter; the sample video is the default if it exists |
+| `3` | Opens advanced options | Only needed for calibration, recording or special flags |
+| `0` | Exits | - |
+
+Rules that apply after it starts:
+
+| Key | Action |
+| --- | --- |
+| `q` | Quit (click the picture window first) |
+| `s` | **Hold** to speak a destination, release to set it |
+| `v` | Same as `s` (kept from the old keys) |
+| `m` | Mute or unmute speech |
+
+Guidance is spoken automatically. You do not need to press anything to hear it.
+
+---
+
+## Set a destination by voice
+
+1. Hold **S** anywhere while the live window is open.
+2. Wait for "Listening...", say a goal, then release.
+3. Visiona3D hears the words, expands them into object classes, and plans
+   toward the nearest one it can see.
+
+Examples:
+
+| You say | It searches for |
+| --- | --- |
+| "I want to sit" | chair, bench, couch, bed |
+| "I need water" | bottle, cup, wine glass, sink, refrigerator |
+| "I am hungry" | apple, banana, sandwich, orange, broccoli, carrot, pizza, donut, cake, refrigerator, dining table |
+| "I want to leave" | door, stairs |
+| "Find my backpack" | handbag, backpack |
+
+The goal stays active across frames. When no candidate is visible it behaves
+like the old `999 m` unknown distance: nothing is invented. When a candidate is
+seen, the nearest usable 3D anchor becomes the A* target. When the goal is
+within about **1.5 m** for **3 consecutive processed frames**, Visiona3D says
+"**You have reached your goal destination...**" once and returns to normal
+exploration. Both numbers are `TO TUNE ON REAL DATA`.
+
+Say "cancel the goal" to clear it.
+
+**How the words are understood.** By default the transcript is parsed locally
+and deterministically: no API key, no account, no cloud LLM. If you set
+`GEMINI_API_KEY`, the transcript is first sent to Gemini Flash
+(`gemini-2.5-flash` by default). The model may only name detector classes, the
+reply is validated locally, and the local parser takes over if the call fails,
+times out or returns something unusable. `--no-voice-agent` forces local
+parsing. Only voice uses the network; navigation never does.
+
+```powershell
+# Optional, current PowerShell window only. Get a key from Google AI Studio.
+$env:GEMINI_API_KEY = "your-key"
+python starter.py --source 0 --hfov 70
+```
+
+You can also put `GEMINI_API_KEY=...` in your local `.env`; the app already
+loads that file at startup. `GEMINI_MODEL` overrides the model there.
+
+If you have no microphone, set the same goal at startup. `--goal` always uses
+the local parser, so it works with no key:
+
+```powershell
+python starter.py --source 0 --hfov 70 --goal "I want to sit"
+```
+
+---
+
+## What you see and hear
+
+| On screen | Meaning |
+| --- | --- |
+| Green area | Floor the system is willing to call free |
+| Blue area | Wall |
+| Red area | Obstacle |
+| Coloured boxes | Objects, labelled with track number, class, confidence, distance and left/right offset |
+| Dots in the boxes | The object's estimated position on the floor in 3D |
+| Right panel | Top-down map: free, occupied, uncertain and unknown cells, plus the planned path |
+| Bottom strip | The decision (`GUIDE`, `CAUTION`, `STOP_UNCLEAR`, `STOP_BLOCKED`), heading, nearest obstacle, frame age and speed |
+| Red bar at the top | The camera is **not calibrated**, so all distances are estimates |
+
+Spoken messages are short, for example "Path clear, continue forward",
+"Caution, person close ahead" or "Stop, path blocked". Speech repeats are
+suppressed until the situation changes.
+
+The map is 2.5D: a top-down grid plus one 3D position per object. It is not a
+full 3D mesh.
+
+**Video playback.** A video file plays on the wall clock. If the CPU needs
+longer than one video frame, older frames are skipped rather than queued, so
+the analysis and any spoken goal refer to the current video time instead of a
+backlog. The picture updates at the processing rate (1.2-2.5 s per analysed
+frame on CPU), and `frame age` shows the delay. `--no-realtime` processes every
+frame instead: exhaustive, but much slower than real time. When a STOP is shown,
+the strip also prints the failed safety check (for example `why: certified
+floor fraction in corridor 0.000 < 0.300`).
+
+---
+
+## Calibration, in plain words
+
+Without calibration, Visiona3D assumes a typical camera lens. It can still show
+where the floor, walls and objects are, but the metre values are estimates; the
+red bar stays on screen to say so.
+
+Calibration is a **one-time measurement of your camera** that turns those
+estimates into metres. It needs a printed checkerboard and about five minutes:
 
 ```powershell
 python scripts\capture_calibration.py --camera 0 --out calib --board 9x6 --views 15
 python scripts\calibrate_camera.py --images calib --board 9x6 --square 0.018 --out reports\camera_intrinsics.json
-python scripts\live_demo.py --source 0 --intrinsics reports\camera_intrinsics.json
 ```
 
-Capture at the resolution you will run at. Intrinsics for a different
-resolution are rejected; the runner never rescales a guessed field of view.
+- `--board 9x6` means 9 by 6 **inner corners**, not squares.
+- `--square 0.018` is the physical square size in metres. Measure your print
+  and replace this number.
+- Capture at the same resolution you will run at. A calibration made for a
+  different resolution is rejected instead of being rescaled.
+- Then start `python starter.py`, choose `3` -> `1`, and enter
+  `reports\camera_intrinsics.json`.
+
+Advanced option `4` prints these same instructions inside the menu.
 
 ---
 
-## What you see
+## If something does not work
 
-| Region | Contents |
+| Symptom | What to do |
 | --- | --- |
-| Camera view | 45% blended floor/wall/obstacle masks, YOLO boxes with `#track class conf distance lateral`, projected 3D anchor points |
-| Top bar | per-stage status (seg, depth, det, plane, scale, certification), processing size and profile |
-| Bottom bar | decision, heading, certified nearest obstacle with bearing and optional lower bound, frame age, process time, FPS, DB session |
-| Right panel | 75 x 60 BEV, forward up: free / occupied / uncertain / unknown, A* path, target cross, robot triangle |
-
-The HUD draws only on the exact frame that produced the masks and anchors. It
-shows frame age so latency is visible instead of hidden.
-
----
-
-## Project layout
-
-One repository, one entry point (`scripts/live_demo.py`), one database.
-
-```
-Visiona3D/
-  scripts/live_demo.py       product entry point: live/video -> HUD -> DB -> speech
-  live/                      runner, synchronisation, HUD, anchors, SQLite, speech bridge
-  perception/                SegFormer, Depth Anything V2, YOLO, pipeline, fusion, tracker
-  geometry/                  camera model, frames, scale, lifting
-  calibration/               intrinsics, abstention, conformal depth config
-  mapping/                   BEV grid, certified floor, obstacles, rolling map
-  planning/                  costmap, A*, targets, smoothing, guidance
-  audio/                     speech engine and priority queue
-  core/                      config, detection types, memory
-  agents/, services/         legacy assistant modules used by the old app
-  kinematics/, evaluation/
-  dataset/, audit/
-  scripts/                   fetch, smoke, evaluation, calibration, demos
-  tests/                     offline tests (numpy/pytest/stdlib only)
-  docs/                      component and operating documentation
-  main.py                    LEGACY app (original YOLO/TTS loop), kept read-only
-  weights/, sample-vid/,     local only, gitignored
-  data/, calib/
-  database/, logs/, reports/ runtime artifacts, gitignored and safe to delete
-```
-
-The old `main.py` app is retained as a read-only reference and shares `core/`,
-`perception/` and `audio/` with the live system. It is not the product entry
-point.
+| `cannot open camera` or no window | Close other apps using the camera; try `python starter.py --source 1` |
+| Models are missing | Run `python scripts\fetch_models.py --yes` once |
+| First start looks frozen for up to a minute | Models are loading; wait for the first frame |
+| Video starts at the wrong place | `python starter.py --source your.mp4 --start-frame 100` |
+| A video run ends immediately | Add `--loop` to repeat it, or check the path |
+| Calibration file rejected | Recapture at the run resolution; the runner does not rescale |
+| Distances look too short or too long | The camera is uncalibrated (`--hfov` demo mode), or `--mount-height` / `--pitch` need measuring |
+| No speech | Press `m`; check the Windows default voice; `--no-speech` mutes it deliberately |
+| Voice does not start | Check the microphone is connected and not used by another app; install the voice packages with `uv sync`; add `--no-voice` to skip voice |
+| "Could not understand" or no transcript | Speak after "Listening..." appears, hold the key while talking, and check the internet connection (speech-to-text is online) |
+| No goal is set | Use `--goal "I want to sit"` at startup, or check the on-screen goal strip after speaking |
+| Voice goal ignores Gemini | Set `GEMINI_API_KEY` in the same PowerShell window. A timeout, quota or invalid reply prints its reason and falls back to the local parser |
+| Everything is slow | Use `--profile fast --proc-width 480`; CPU-only runs at roughly 0.5-0.8 updates per second |
 
 ---
 
-## Configuration
+## Where your data goes
+
+Everything stays on this machine by default. The only network use is voice: the
+held-key audio clip goes to Google speech-to-text and, if `GEMINI_API_KEY` is
+set, the transcript goes to Gemini Flash. No frames, maps or database rows are
+uploaded. Use `--no-voice` to disable voice entirely, or `--no-voice-agent` to
+keep speech-to-text but understand goals locally.
+
+| Path | Contents |
+| --- | --- |
+| `database\visiona_live.db` | Sessions, frames, every object position, the map snapshot for each stored frame, spoken events, and `goal_set` / `goal_cancelled` / `goal_arrival` records |
+| `reports\` | Calibration, videos and summaries you asked a command to write |
+| `weights\`, `sample-vid\`, `data\`, `calib\` | Downloaded models and your local inputs |
+
+Read the object registry:
 
 ```powershell
---profile fast|balanced|quality     model input sizes (not safety rules)
---proc-width 640                    processing width cap
---goal-class chair                  route to the nearest detected object instead
---fusion-config path.json           optional SegFormer + MobileSAM tuning
---conformal-depth path.json         optional pessimistic obstacle bounds
---no-speech --no-speak-objects      mute audio (events are still logged)
---no-db                             disable persistence
---headless --out-video out.mp4      write the annotated HUD instead of a window
---start-frame 100 --max-frames 20 --loop --no-realtime
---camera-width 1280 --camera-height 720
+python -c "import sqlite3;c=sqlite3.connect('database/visiona_live.db');print(c.execute('select track_id,class_name,round(distance_m,2),round(anchor_x,2),round(anchor_y,2),round(anchor_z,2) from object_registry order by distance_m').fetchall())"
 ```
 
-Mount defaults (`--mount-height 1.4`, `--pitch 15`) and `--floor-threshold 0.90`
-are `TO TUNE ON REAL DATA`.
+`object_registry` holds one row per tracked object per session; `bev_snapshots`
+holds the compressed 75 x 60 grid for each stored frame. Delete the database
+file at any time to start fresh; it is recreated on the next run.
 
 ---
 
-## Persistence
+## Advanced control
+
+Every option is available directly on the same entry point. `python starter.py
+--help` lists them all.
+
+### Source and camera geometry
+
+| Option | Meaning |
+| --- | --- |
+| `--source 0` | Webcam index, or a video file path |
+| `--intrinsics file.json` | Use a measured calibration (accurate metres) |
+| `--hfov 70` | Estimate the lens from a horizontal field of view instead (demo only; red bar stays on) |
+| `--mount-height 1.4` | Camera height in metres (`TO TUNE ON REAL DATA`) |
+| `--pitch 15` | Downward camera tilt in degrees (`TO TUNE ON REAL DATA`) |
+| `--camera-width`, `--camera-height` | Request a specific webcam resolution |
+
+### Speed and model choice
+
+| Option | Meaning |
+| --- | --- |
+| `--profile fast` | Smallest model inputs and fastest CPU run (default) |
+| `--profile balanced`, `--profile quality` | Larger inputs, slower, no change to safety rules |
+| `--proc-width 640` | Processing width cap; lower is faster |
+| `--weights-dir weights` | Where local model weights live |
+| `--depth-variant indoor`, `--depth-variant outdoor` | Pick the depth checkpoint for the scene |
+
+### Navigation and safety
+
+| Option | Meaning |
+| --- | --- |
+| `--goal "I want to sit"` | Expand a natural-language goal and plan to its nearest candidate |
+| `--goal-class chair` | Plan toward one exact detector class (legacy single-class mode) |
+| `--arrival-distance 1.5` | Distance that counts as reaching the goal (`TO TUNE ON REAL DATA`) |
+| `--arrival-frames 3` | Consecutive frames required before the arrival sentence (`TO TUNE ON REAL DATA`) |
+| `--no-voice` | Do not open the microphone or global key listener |
+| `--goal-model gemini-2.5-flash` | Gemini Flash model for voice goals (needs `GEMINI_API_KEY`) |
+| `--no-voice-agent` | Force the local deterministic goal parser |
+| `--floor-threshold 0.90` | Floor certification threshold (`TO TUNE ON REAL DATA`) |
+| `--fusion-config file.json` | Optional tuned SegFormer + MobileSAM refinement |
+| `--conformal-depth file.json` | Optional pessimistic obstacle bounds from calibration |
+
+### Audio
+
+| Option | Meaning |
+| --- | --- |
+| `--no-speech` | Start muted |
+| `--no-speak-objects` | Speak navigation decisions only, not object chatter |
+
+### Recording, automation and storage
+
+| Option | Meaning |
+| --- | --- |
+| `--headless` | No window; use with `--out-video` |
+| `--out-video out.mp4` | Write the annotated view to a video file |
+| `--video-fps 4` | Output video frame rate |
+| `--start-frame 100` | Skip ahead in a video |
+| `--max-frames 20` | Stop after this many processed frames |
+| `--loop` | Repeat the video |
+| `--no-realtime` | Read every frame back-to-back instead of keeping the video on the wall clock |
+| `--db path.db`, `--no-db` | Choose the database, or turn persistence off |
+| `--summary-json file.json` | Write the run summary |
+
+Two useful examples:
 
 ```powershell
-python -c "import sqlite3;c=sqlite3.connect('database/visiona_live.db');print(c.execute('select class_name,round(distance_m,2),round(anchor_x,2),round(anchor_y,2),round(anchor_z,2) from object_registry order by distance_m').fetchall())"
+python starter.py --source 0 --intrinsics reports\camera_intrinsics.json --goal "I want to sit"
+python starter.py --source sample-vid\FRONT\VID2.mp4 --hfov 70 --profile fast --max-frames 4 --headless --out-video reports\live\demo.mp4 --no-speech --summary-json reports\live\summary.json
 ```
 
-Tables: `sessions`, `frames`, `objects`, `object_registry`, `bev_snapshots`,
-`events`. The schema version is checked on open; a mismatch raises instead of
-silently reading old columns.
+`--out-video` requires `--headless`. `--intrinsics` and `--hfov` are mutually
+exclusive; the program refuses to guess silently.
+
+### See every feature on one video
+
+This renders the full HUD (segmentation, object boxes and IDs, 3D anchors, BEV
+map, A* path and decisions) to an MP4, stores the 3D object grid in SQLite, and
+speaks guidance while it runs:
+
+```powershell
+python starter.py --source sample-vid\FRONT\VID2.mp4 --hfov 70 --profile fast --start-frame 100 --max-frames 40 --goal-class person --out-video reports\full_demo\features.mp4 --headless --no-realtime --summary-json reports\full_demo\summary.json
+```
+
+For your own video, replace the `--source` path (keep the quotes if it has
+spaces). Add `--no-speech` to render silently; spoken events are still logged.
+
+Results:
+
+- `reports\full_demo\features.mp4` - the annotated run.
+- `reports\full_demo\summary.json` - decisions, object count, timings, errors.
+- `database\visiona_live.db` - `frames`, `objects`, `object_registry`,
+  `bev_snapshots` and `events` for that session.
+
+The optional SegFormer + MobileSAM fusion and conformal obstacle bounds need a
+tuned config or fitted interval made from real labelled captures; they are not
+enabled by this command and are not faked.
+
+---
+
+## How it works
+
+```
+camera/video -> floor, wall and obstacle masks (SegFormer)
+             -> metric depth (Depth Anything V2)
+             -> object boxes and track IDs (YOLO11n)
+             -> 3D floor positions per object
+             -> certified top-down grid, 75 x 60 at 0.1 m
+             -> A* path and guidance
+             -> HUD + SQLite + speech
+```
+
+Only the newest processed frame is displayed, with its age shown, so the
+picture and the map always belong to the same moment. Model input sizes change
+with `--profile`; safety rules do not.
+
+---
+
+## Safety and honesty
+
+1. Unknown and uncertain cells are never treated as free space.
+2. A failed stage becomes a visible status and a stop decision, not a crash.
+3. Obstacles use a pessimistic lower bound only when a calibrated depth
+   interval is supplied; otherwise no lower bound is invented.
+4. The planner recommends a path; it never claims the path is safe.
+5. Uncalibrated runs are labelled on screen and in the session record.
+6. The verified runs used route video, not a physically calibrated camera and
+   not blind participants. Nothing here is a validated accuracy claim.
 
 ---
 
 ## Performance (measured, not promised)
 
-On the bundled 1920x1080 route video at 640x360, CPU only (12 logical cores,
-torch 10 threads, no CUDA), warm frames:
+CPU only, 640x360 processing, bundled 1920x1080 video, warm frames:
 
 | Stage | Time |
 | --- | --- |
-| SegFormer (256 input) | 0.16 - 0.26 s |
-| Depth Anything V2 (266 input) | 0.49 - 0.80 s |
-| YOLO11n | 0.13 - 0.17 s |
-| ground lift | 0.41 - 0.57 s |
-| **total per processed frame** | **1.23 - 2.45 s** |
+| Segmentation | 0.16 - 0.26 s |
+| Depth | 0.49 - 0.80 s |
+| Detection | 0.13 - 0.17 s |
+| 3D lift | 0.41 - 0.57 s |
+| **Total per processed frame** | **1.23 - 2.45 s** |
 
-That is roughly 0.5-0.8 HUD updates per second. The display stays responsive and
-shows the latest processed frame; stale frames are dropped, never queued. To go
-faster: `--proc-width 480 --profile fast`, or run the backends on a GPU. The
-first frame additionally includes model loading.
-
----
-
-## Safety guarantees
-
-1. Free space must be certified; unknown/uncertain cells are not traversable.
-2. Obstacles use the conformal lower-bound distance when an interval artifact is
-   supplied; otherwise no lower bound is invented.
-3. Every failed stage becomes a status and a STOP/NO_PERCEPTION decision, not an
-   exception in the loop.
-4. The planner recommends; it never claims that a path is safe.
-5. Uncalibrated intrinsics are labelled in the HUD and in the session row.
+That is roughly 0.5-0.8 HUD updates per second. A warm smoke run measured
+1.8 s on its second frame; its first frame took 30 s including model warm-up.
+The display stays responsive and always shows the latest processed frame.
 
 ---
 
-## Tests and verification
+## Tests
 
-No model, camera, network or TTS engine is used in tests.
+No model, camera, network or speech engine is used in tests.
 
 ```powershell
 python -m pytest tests audio -q
 python geometry\scripts\run_checks.py
 ```
 
-Latest full run: `294 passed, 1 warning, 14 subtests passed` and all geometry,
-perception, mapping and planning checks passed. Synthetic results are regenerated
-by `python scripts\run_planner_eval.py --scenes 200 --seed 42`; report artifacts
-are local and not committed.
+Latest run on the development machine: `370 passed, 1 warning, 14 subtests
+passed`, and all M1-M13 geometry, perception, mapping and planning checks
+passed. Synthetic evaluation is regenerated with
+`python scripts\run_planner_eval.py --scenes 200 --seed 42`. Report files are
+local and not committed.
 
 ---
 
 ## Limitations
 
 - Not field-tested on a physical camera or with blind users.
-- 2.5D grid, not a mesh: BEV plus one 3D anchor per object.
-- No odometry fusion in the live loop; each frame produces its own grid.
-- Monocular depth bias is uncorrected.
+- The map is a 2.5D grid plus one 3D anchor per object, not a mesh.
+- Each frame builds its own grid; there is no odometry accumulation yet.
+- Monocular depth bias is uncorrected, including the 1.5 m arrival distance.
+- Voice goals and arrival thresholds are tested offline only; microphone,
+  speech-to-text and real-room distances still need a field test. The Gemini
+  path is covered with a fake transport, not the live API.
 - CPU-only HUD rate is about 0.5-0.8 Hz on the test machine.
 - No regulatory or safety certification.
 
@@ -234,25 +432,13 @@ are local and not committed.
 ## Documentation
 
 - [`docs/live_system.md`](docs/live_system.md) - operating guide, synchronisation,
-  database schema, measured latency, limitations.
-- [`docs/perception_backends.md`](docs/perception_backends.md) - models, fusion
-  rules, evaluation and tuning.
+  database schema, measured latency.
+- [`docs/perception_backends.md`](docs/perception_backends.md) - models, fusion,
+  evaluation and tuning.
 - [`docs/mapping_planning.md`](docs/mapping_planning.md) - grid conventions,
   certification, planner and guidance.
 - [`docs/annotation_guide.md`](docs/annotation_guide.md) and
   [`docs/capture_protocol.md`](docs/capture_protocol.md) - data collection.
-
-## Legacy app
-
-`main.py` is the original live app (YOLO + MiDaS + TTS + LangChain assistant).
-It still runs, but it is not connected to the safety stack and is kept only as a
-reference:
-
-```powershell
-python main.py
-```
-
-Its optional `GROQ_API_KEY` in `.env` is not required by the live system.
 
 ---
 

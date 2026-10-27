@@ -1,4 +1,4 @@
-"""Visiona-Walk live RGB system.
+"""Visiona3D live RGB system.
 
 Connects the live capture/YOLO/speech layer to the certified mapping,
 planning and guidance stack. Import submodules explicitly so that offline

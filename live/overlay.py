@@ -260,6 +260,27 @@ def _bar(
     return canvas
 
 
+def decision_reason(guidance: Any) -> str:
+    """Return the first actionable abstention reason for a STOP decision."""
+    if str(getattr(guidance, "decision", "")) not in ("STOP_UNCLEAR", "STOP_BLOCKED"):
+        return ""
+    for item in getattr(guidance, "reasons", None) or ():
+        text = str(item).strip()
+        if text and text != "all abstention checks passed":
+            return text
+    return ""
+
+
+def _fit_text(text: str, max_width: int, scale: float = 0.42) -> str:
+    """Trim text with an ellipsis so it fits inside max_width pixels."""
+    if cv2.getTextSize(text, FONT, scale, 1)[0][0] <= max_width:
+        return text
+    suffix = "..."
+    while text and cv2.getTextSize(text + suffix, FONT, scale, 1)[0][0] > max_width:
+        text = text[:-1]
+    return text + suffix
+
+
 def compose_hud(
     frame_bgr: np.ndarray,
     *,
@@ -268,6 +289,7 @@ def compose_hud(
     nearest: dict | None = None,
     bev_panel: np.ndarray | None = None,
     status_line: str = "",
+    goal_line: str = "",
     frame_age_s: float | None = None,
     process_ms: float | None = None,
     fps: float | None = None,
@@ -288,15 +310,42 @@ def compose_hud(
 
     top_h = 44 if uncalibrated else 24
     _bar(canvas, 0, top_h, (20, 20, 20), alpha=0.70)
-    top_text = status_line or "Visiona-Walk live"
+    top_text = status_line or "Visiona3D live"
     cv2.putText(canvas, top_text, (8, 16), FONT, 0.44, WHITE, 1, cv2.LINE_AA)
     if uncalibrated:
         warn = "UNCALIBRATED INTRINSICS - DISTANCES ARE ESTIMATES"
         cv2.putText(canvas, warn, (8, 38), FONT, 0.42, (60, 60, 255), 1, cv2.LINE_AA)
 
+    if goal_line:
+        goal_h = 22
+        _bar(canvas, top_h, goal_h, (36, 92, 92), alpha=0.78)
+        cv2.putText(
+            canvas,
+            goal_line,
+            (8, top_h + 15),
+            FONT,
+            0.43,
+            WHITE,
+            1,
+            cv2.LINE_AA,
+        )
+
+    reason = decision_reason(guidance)
     bottom_h = 52
     decision = str(getattr(guidance, "decision", "NO_PERCEPTION"))
     color = decision_color(decision)
+    if reason:
+        _bar(canvas, h - bottom_h - 22, 22, (20, 20, 20), alpha=0.78)
+        cv2.putText(
+            canvas,
+            _fit_text(f"why: {reason}", max(120, w + panel_w - 16)),
+            (8, h - bottom_h - 6),
+            FONT,
+            0.42,
+            (180, 235, 255),
+            1,
+            cv2.LINE_AA,
+        )
     _bar(canvas, h - bottom_h, bottom_h, color, alpha=0.85)
 
     heading = float(getattr(guidance, "heading_deg", 0.0) or 0.0)
@@ -376,6 +425,7 @@ __all__ = [
     "blend_segmentation",
     "compose_hud",
     "decision_color",
+    "decision_reason",
     "draw_objects",
     "loading_frame",
     "render_bev_panel",

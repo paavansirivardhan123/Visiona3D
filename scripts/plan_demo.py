@@ -1,4 +1,4 @@
-"""Visiona-Walk Bird's-Eye View Mapping, Path Planning, and Guidance Demo.
+"""Visiona3D Bird's-Eye View Mapping, Path Planning, and Guidance Demo.
 
 SAFETY PRINCIPLES (verbatim):
 1. Free space must be certified. Unknown and uncertain cells are NOT traversable.
@@ -646,7 +646,7 @@ def run_demo(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Visiona-Walk Bird's-Eye Map & Planner Demo")
+    parser = argparse.ArgumentParser(description="Visiona3D Bird's-Eye Map & Planner Demo")
     parser.add_argument("image", nargs="?", default=None, help="Path to input RGB image")
     parser.add_argument("--fake", action="store_true", help="Run offline analytic synthetic scene")
     parser.add_argument("--intrinsics", type=str, default=None, help="Camera intrinsics JSON file (required for real images)")

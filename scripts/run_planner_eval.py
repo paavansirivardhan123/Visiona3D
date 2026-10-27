@@ -1,4 +1,4 @@
-"""Synthetic ablation evaluation script for Visiona-Walk Mapping & Planning.
+"""Synthetic ablation evaluation script for Visiona3D Mapping & Planning.
 
 SAFETY PRINCIPLES (verbatim):
 1. Free space must be certified. Unknown and uncertain cells are NOT traversable.
@@ -244,7 +244,7 @@ def run_synthetic_ablation(
     variants = ["A_naive", "B_conformal_floor", "C_geometric_veto", "D_conformal_margin"]
     results: dict[str, Any] = {
         "metadata": {
-            "title": "Visiona-Walk Mapping & Planning Synthetic Ablation",
+            "title": "Visiona3D Mapping & Planning Synthetic Ablation",
             "tag": "SYNTHETIC ONLY",
             "n_scenes": n_scenes,
             "seed": base_seed,
@@ -404,7 +404,7 @@ def run_synthetic_ablation(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Visiona-Walk Planner Synthetic Ablation")
+    parser = argparse.ArgumentParser(description="Run Visiona3D Planner Synthetic Ablation")
     parser.add_argument("--scenes", type=int, default=200, help="Number of random scenes (>= 20)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
     parser.add_argument("--out-dir", type=str, default="reports/planner_eval", help="Output directory")

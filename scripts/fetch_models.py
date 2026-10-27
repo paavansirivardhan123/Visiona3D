@@ -1,4 +1,4 @@
-"""Model fetch helper for Visiona-Walk.
+"""Model fetch helper for Visiona3D.
 
 Default mode is ``--dry-run`` and makes NO network calls. Downloads happen
 only with ``--yes``. ``--check`` asks the Hugging Face API whether each model
@@ -111,7 +111,7 @@ def _check_hf_ids() -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="List or download Visiona-Walk model weights")
+    parser = argparse.ArgumentParser(description="List or download Visiona3D model weights")
     parser.add_argument("--dry-run", action="store_true", help="list only (default; no network)")
     parser.add_argument("--yes", action="store_true", help="actually download the weights")
     parser.add_argument("--check", action="store_true", help="verify model ids resolve (network)")
@@ -121,7 +121,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("ERROR: --yes and --check are mutually exclusive")
         return 2
 
-    print("Visiona-Walk model manifest")
+    print("Visiona3D model manifest")
     print(f"Repository root: {REPO_ROOT}")
     _print_table()
 

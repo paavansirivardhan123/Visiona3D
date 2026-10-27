@@ -39,9 +39,18 @@ from live.anchors import (
     ObjectAnchor,
     assign_track_ids,
     compute_object_anchors,
-    nearest_object,
 )
 from live.db import DEFAULT_DB_PATH, LiveDatabase
+from live.goal_agent import GeminiGoalInterpreter
+from live.goals import (
+    DEFAULT_ARRIVAL_STABLE_FRAMES,
+    DEFAULT_GOAL_ARRIVAL_M,
+    GoalSpec,
+    GoalTracker,
+    build_goal_tracker,
+    is_cancel_goal,
+    parse_goal_text,
+)
 from live.guidance_bridge import GuidanceAnnouncer
 from live.imaging import (
     DEFAULT_PROC_WIDTH,
@@ -107,11 +116,17 @@ class LiveConfig:
     floor_threshold: float = DEFAULT_FLOOR_THRESHOLD
     fusion_config_json: str | None = None
     conformal_depth_json: str | None = None
+    goal_text: str | None = None
     goal_class: str | None = None
+    goal_model: str | None = None
+    voice_agent: bool = True
+    arrival_distance_m: float = DEFAULT_GOAL_ARRIVAL_M  # TO TUNE ON REAL DATA
+    arrival_stable_frames: int = DEFAULT_ARRIVAL_STABLE_FRAMES  # TO TUNE ON REAL DATA
     db_path: str | Path | None = DEFAULT_DB_PATH
     enable_db: bool = True
     speech: bool = True
     speak_objects: bool = True
+    voice: bool = True
     headless: bool = False
     out_video: str | None = None
     video_fps: float = 4.0
@@ -138,6 +153,12 @@ class LiveConfig:
             raise ValueError("start_frame must be non-negative")
         if int(self.grid_every) <= 0:
             raise ValueError("grid_every must be positive")
+        if self.goal_text and self.goal_class:
+            raise ValueError("pass goal_text or goal_class, not both")
+        if float(self.arrival_distance_m) <= 0.0:
+            raise ValueError("arrival_distance_m must be positive")
+        if int(self.arrival_stable_frames) < 1:
+            raise ValueError("arrival_stable_frames must be at least 1")
         if not self.intrinsics_json and self.hfov_deg is None:
             raise ValueError(
                 "live mode needs calibrated intrinsics (--intrinsics). "
@@ -163,6 +184,9 @@ class FrameResult:
     status_line: str = ""
     db_line: str = ""
     plane_normal: np.ndarray | None = None
+    goal_line: str = ""
+    goal_candidate: ObjectAnchor | None = None
+    goal_complete: bool = False
 
 
 def _grid_counts(grid: np.ndarray) -> dict[str, int]:
@@ -202,6 +226,26 @@ class LiveRunner:
         )
         self.estimator = ScaleEstimator(self.mount, ScaleConfig())
         self.tracker = ObjectTracker()
+
+        self._goal_lock = threading.Lock()
+        self._goal_tracker = build_goal_tracker(
+            goal_text=config.goal_text,
+            goal_class=config.goal_class,
+            arrival_distance_m=config.arrival_distance_m,
+            stable_frames=config.arrival_stable_frames,
+        )
+        self._goal_agent = (
+            GeminiGoalInterpreter(model=config.goal_model)
+            if config.voice_agent and config.voice
+            else None
+        )
+        self._last_index = int(config.start_frame)
+        self._voice = None
+        self._voice_ready = False
+        self._voice_listening = False
+        self._voice_hint_given = False
+        self._last_voice_error_s: dict[str, float] = {}
+        self._pending_goal_events: list[tuple[float, str, str]] = []
 
         self.source = VideoSource(
             parse_source(config.source),
@@ -260,7 +304,20 @@ class LiveRunner:
                 {
                     "proc_width": config.proc_width,
                     "floor_threshold": config.floor_threshold,
+                    "goal_text": config.goal_text,
                     "goal_class": config.goal_class,
+                    "goal_interpreter": (
+                        f"gemini:{self._goal_agent.model}"
+                        if self._goal_agent is not None and self._goal_agent.available
+                        else "local"
+                    ),
+                    "goal_candidates": (
+                        list(self._goal_tracker.spec.candidates)
+                        if self._goal_tracker is not None
+                        else None
+                    ),
+                    "arrival_distance_m": config.arrival_distance_m,
+                    "arrival_stable_frames": config.arrival_stable_frames,
                     "seg_input": self.seg_input,
                     "depth_input": self.depth_input,
                 }
@@ -410,7 +467,44 @@ class LiveRunner:
                 self._capture_done = True
                 self._cond.notify_all()
 
-    def _perception_camera_loop(self) -> None:
+    def _capture_file_loop(self) -> None:
+        """Read a video in real time, keeping only the newest frame.
+
+        Perception is slower than the video, so this reader stays on the wall
+        clock and overwrites the pending frame instead of playing the file in
+        slow motion. The analysis therefore refers to the current video time.
+        """
+        index = int(self.config.start_frame)
+        frame_period = 1.0 / max(self.info.fps, 1e-3)
+        next_ts = time.monotonic()
+        try:
+            while not self._stop.is_set():
+                frame = self.source.read()
+                if frame is None:
+                    if self.config.loop:
+                        self.source.rewind()
+                        index = 0
+                        next_ts = time.monotonic()
+                        continue
+                    break
+                index += 1
+                frame = self._resize(frame)
+                with self._cond:
+                    self._frame = (index, time.monotonic(), frame)
+                    self._capture_index = index
+                    self._cond.notify_all()
+                next_ts += frame_period
+                delay = next_ts - time.monotonic()
+                if delay > 0.0:
+                    time.sleep(delay)
+                else:
+                    next_ts = time.monotonic()
+        finally:
+            with self._cond:
+                self._capture_done = True
+                self._cond.notify_all()
+
+    def _perception_loop(self) -> None:
         try:
             while not self._stop.is_set():
                 with self._cond:
@@ -479,6 +573,15 @@ class LiveRunner:
         nearest: dict = {}
         plane_normal = None
         statuses = dict(outputs.statuses)
+        with self._goal_lock:
+            self._last_index = index
+            goal_tracker = self._goal_tracker
+            pending_events = self._pending_goal_events
+            self._pending_goal_events = []
+        for event_ts, event_kind, event_text in pending_events:
+            self.db.log_event(self.session_id, index, event_ts, event_kind, event_text)
+        goal_candidate: ObjectAnchor | None = None
+        arrival_text: str | None = None
 
         if outputs.seg is not None and outputs.lift is not None:
             labels = np.asarray(outputs.seg.labels)
@@ -519,11 +622,11 @@ class LiveRunner:
             costmap = build_costmap(bev.grid, cfg=self.map_cfg)
             start_c, start_r = self._start_cell(costmap)
             goal_unreachable = False
-            if self.config.goal_class:
-                goal = nearest_object(observations, self.config.goal_class)
-                if goal is not None:
+            if goal_tracker is not None and goal_tracker.active:
+                goal_candidate = goal_tracker.select(observations)
+                if goal_candidate is not None:
                     target_cell = find_anchor_target(
-                        costmap, goal.position_g, (start_c, start_r)
+                        costmap, goal_candidate.position_g, (start_c, start_r)
                     )
                     goal_unreachable = target_cell is None
             if target_cell is None and not goal_unreachable:
@@ -550,6 +653,18 @@ class LiveRunner:
         else:
             statuses["frame"] = "no lift or segmentation; map unavailable"
 
+        if goal_tracker is not None and goal_tracker.active:
+            with self._goal_lock:
+                if self._goal_tracker is goal_tracker:
+                    arrival_text = goal_tracker.update(goal_candidate)
+            if arrival_text is not None:
+                self.db.log_event(
+                    self.session_id, index, time.time(), "goal_arrival", arrival_text
+                )
+                print(f"  [Goal] {arrival_text}")
+                self._speak_text(arrival_text, priority=True, bypass_cooldown=True)
+        goal_line = self._goal_line(goal_tracker, goal_candidate)
+
         process_ms = (time.perf_counter() - started) * 1000.0
         processed_ts = time.time()
         decision = "NO_PERCEPTION" if guidance is None else guidance.decision
@@ -564,7 +679,7 @@ class LiveRunner:
         frame_id = self.db.log_frame(
             self.session_id,
             frame_index=index,
-            capture_ts=capture_ts,
+            capture_ts=time.time() - (time.monotonic() - float(capture_ts)),
             processed_ts=processed_ts,
             process_ms=process_ms,
             decision=decision,
@@ -610,6 +725,11 @@ class LiveRunner:
                 status_line=status_line,
                 db_line=self.db_line,
                 plane_normal=plane_normal,
+                goal_line=goal_line,
+                goal_candidate=goal_candidate,
+                goal_complete=bool(
+                    goal_tracker is not None and not goal_tracker.active
+                ),
             )
             self._processed += 1
 
@@ -679,6 +799,204 @@ class LiveRunner:
         except Exception as exc:  # noqa: BLE001 - TTS must never kill perception
             self._errors.append(f"speech: {type(exc).__name__}: {exc}")
 
+    def _speak_text(
+        self,
+        text: str,
+        *,
+        priority: bool = True,
+        bypass_cooldown: bool = True,
+        emergency: bool = False,
+    ) -> None:
+        if not text or self.speech is None or not self._speech_enabled:
+            return
+        try:
+            self.speech.speak(
+                text,
+                priority=bool(priority),
+                bypass_cooldown=bool(bypass_cooldown),
+                emergency=bool(emergency),
+            )
+        except Exception as exc:  # noqa: BLE001 - TTS must never kill perception
+            self._errors.append(f"speech: {type(exc).__name__}: {exc}")
+
+    def _goal_line(
+        self,
+        tracker: GoalTracker | None,
+        candidate: ObjectAnchor | None,
+    ) -> str:
+        if tracker is None:
+            return ""
+        if not tracker.active:
+            return f"goal {tracker.spec.intent}: reached"
+        if candidate is not None:
+            return (
+                f"goal {tracker.spec.intent}: "
+                f"{candidate.class_name} {candidate.distance_m:.1f} m"
+            )
+        return f"goal {tracker.spec.intent}: searching {tracker.spec.candidates_text}"
+
+    def _start_voice(self) -> None:
+        if not self.config.voice or self.config.headless:
+            return
+        try:
+            from live.voice import PushToTalkVoice
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [Voice] Unavailable: {type(exc).__name__}: {exc}")
+            return
+        self._voice = PushToTalkVoice(
+            on_transcript=self._on_voice_transcript,
+            on_listening=self._on_voice_listening,
+            on_error=self._on_voice_error,
+        )
+        self._voice_ready = bool(self._voice.start())
+        if self._voice_ready:
+            self._speak_text(
+                "Voice ready. Hold S, say your goal, then release.",
+                priority=True,
+                bypass_cooldown=True,
+            )
+        else:
+            print('  [Voice] You can still set a goal with --goal "I want to sit".')
+        if self._goal_agent is not None and self._goal_agent.available:
+            print(
+                f"  [Goal] Voice understanding: Gemini ({self._goal_agent.model}), "
+                "local parser fallback."
+            )
+        else:
+            print(
+                "  [Goal] Voice understanding: local parser "
+                "(set GEMINI_API_KEY to use Gemini Flash)."
+            )
+
+    def _on_voice_transcript(self, text: str) -> None:
+        transcript = " ".join(str(text or "").split()).strip()
+        if not transcript:
+            return
+        if is_cancel_goal(transcript):
+            self._cancel_goal(transcript)
+            return
+        spec, source = self._interpret_goal(transcript)
+        if spec is None:
+            self._speak_text(
+                "I did not catch a goal. Hold S and try again.",
+                priority=True,
+                bypass_cooldown=True,
+            )
+            return
+        if spec.intent == "cancel":
+            self._cancel_goal(transcript)
+            return
+        tracker = GoalTracker(
+            spec,
+            arrival_distance_m=self.config.arrival_distance_m,
+            stable_frames=self.config.arrival_stable_frames,
+        )
+        with self._goal_lock:
+            self._goal_tracker = tracker
+        self._queue_goal_event(
+            "goal_set", f"{transcript} -> {spec.candidates_text} [{source}]"
+        )
+        print(f"  [Goal] Active ({source}): {spec.intent} -> {spec.candidates_text}")
+        self._speak_text(
+            f"Goal set. Looking for {spec.candidates_text}.",
+            priority=True,
+            bypass_cooldown=True,
+        )
+
+    def _interpret_goal(self, transcript: str) -> tuple[GoalSpec | None, str]:
+        agent = self._goal_agent
+        if agent is not None and agent.available:
+            spec = agent.interpret(transcript)
+            if spec is not None:
+                return spec, "gemini"
+            reason = agent.last_error or "no response"
+            self._errors.append(f"goal agent: {reason}")
+            print(f"  [Goal] Gemini unavailable ({reason}); using local parser.")
+        try:
+            return parse_goal_text(transcript), "local"
+        except ValueError:
+            return None, "none"
+
+    def _cancel_goal(self, transcript: str) -> None:
+        with self._goal_lock:
+            self._goal_tracker = None
+        self._queue_goal_event("goal_cancelled", transcript)
+        print("  [Goal] Cancelled.")
+        self._speak_text(
+            "Goal cancelled. Continue exploring.",
+            priority=True,
+            bypass_cooldown=True,
+        )
+
+    def _queue_goal_event(self, kind: str, text: str) -> None:
+        with self._goal_lock:
+            self._pending_goal_events.append((time.time(), str(kind), str(text)))
+
+    def _on_voice_listening(self, active: bool) -> None:
+        self._voice_listening = bool(active)
+        if self.speech is None or not self._speech_enabled:
+            return
+        try:
+            if active:
+                self.speech.duck()
+            else:
+                self.speech.unduck()
+        except Exception as exc:  # noqa: BLE001
+            self._errors.append(f"speech duck: {type(exc).__name__}: {exc}")
+
+    def _on_voice_error(self, message: str) -> None:
+        now = time.monotonic()
+        last = self._last_voice_error_s.get(message, 0.0)
+        if now - last < 10.0:  # TO TUNE ON REAL DATA
+            return
+        self._last_voice_error_s[message] = now
+        self._errors.append(f"voice: {message}")
+        self._speak_text(message, priority=True, bypass_cooldown=True)
+
+    def _voice_unavailable_hint(self) -> None:
+        if self._voice_hint_given:
+            return
+        self._voice_hint_given = True
+        if self._voice is None:
+            print(
+                "  [Voice] Voice is disabled for this run. "
+                'Start with --goal "I want to sit" to set one.'
+            )
+            self._speak_text(
+                "Voice input is off. You can set a goal with the goal option.",
+                priority=True,
+                bypass_cooldown=True,
+            )
+            return
+        detail = self._voice.error or "voice is unavailable"
+        print(
+            f"  [Voice] {detail}. Install pyaudio, SpeechRecognition and pynput, "
+            'or start with --goal "I want to sit".'
+        )
+        self._speak_text(
+            "Voice input is unavailable. You can set a goal with the goal option.",
+            priority=True,
+            bypass_cooldown=True,
+        )
+
+    def _announce_initial_goal(self) -> None:
+        with self._goal_lock:
+            tracker = self._goal_tracker
+        if tracker is None:
+            return
+        self.db.log_event(
+            self.session_id,
+            self._last_index,
+            time.time(),
+            "goal_set",
+            f"{tracker.spec.text} -> {tracker.spec.candidates_text}",
+        )
+        self._speak_text(
+            f"Goal set. Looking for {tracker.spec.candidates_text}.",
+            priority=True,
+            bypass_cooldown=True,
+        )
+
     # ------------------------------------------------------------------
     # Public run loop
     # ------------------------------------------------------------------
@@ -700,13 +1018,22 @@ class LiveRunner:
                 raise RuntimeError(f"could not open output video: {out_path}")
             self._writer = writer
         self._print_header()
+        self._start_voice()
+        self._announce_initial_goal()
 
         if self.info.is_camera:
             self._threads.append(
                 threading.Thread(target=self._capture_camera_loop, daemon=True)
             )
             self._threads.append(
-                threading.Thread(target=self._perception_camera_loop, daemon=True)
+                threading.Thread(target=self._perception_loop, daemon=True)
+            )
+        elif self.config.realtime:
+            self._threads.append(
+                threading.Thread(target=self._capture_file_loop, daemon=True)
+            )
+            self._threads.append(
+                threading.Thread(target=self._perception_loop, daemon=True)
             )
         else:
             self._threads.append(
@@ -726,18 +1053,37 @@ class LiveRunner:
         return summary
 
     def _print_header(self) -> None:
-        print("Visiona-Walk live - RGB only")
+        print("Visiona3D live - RGB only")
         print(f"  source:      {self.info.label} ({self.info.width}x{self.info.height} @ {self.info.fps:.1f} fps)")
         print(f"  processing:  {self.proc_w}x{self.proc_h} ({self.profile}, seg {self.seg_input}, depth {self.depth_input})")
         print(f"  intrinsics:  {self.intrinsics_provenance}")
         print(f"  mount:       height {self.mount.h_known:.2f} m, pitch {self.mount.pitch_deg:.1f} deg (TO TUNE ON REAL DATA)")
         print(f"  capture:     {cv2_backend_note()}")
+        if self.info.is_camera:
+            playback = "newest frame only; analysis is as fresh as the CPU allows"
+        elif self.config.realtime:
+            playback = "real time; frames the CPU cannot process are skipped"
+        else:
+            playback = "every frame, no pacing (runs slower than real time)"
+        print(f"  playback:    {playback}")
         print(f"  database:    {self.db.path if self.db.enabled else 'off'}")
         if self.session_id:
             print(f"  session:     {self.session_id}")
         if self.uncalibrated:
             print("  WARNING:     intrinsics are not a physical-camera measurement; metric distances are estimates.")
-        print("  [q] quit   [s] toggle speech\n")
+        with self._goal_lock:
+            tracker = self._goal_tracker
+        if tracker is not None:
+            print(
+                f"  goal:        {tracker.spec.intent} -> "
+                f"{tracker.spec.candidates_text} "
+                f"(arrival {tracker.arrival_distance_m:.1f} m, TO TUNE ON REAL DATA)"
+            )
+        keys = "  [q] quit"
+        if self.config.voice and not self.config.headless:
+            keys += "   [s] hold to speak, release to set a goal"
+        keys += "   [m] mute speech"
+        print(keys + "\n")
 
     def _headless_loop(self) -> None:
         while not self._finished.is_set() or self._has_new_result():
@@ -763,7 +1109,7 @@ class LiveRunner:
             time.sleep(0.05)
 
     def _display_loop(self) -> None:
-        window = "Visiona-Walk Live (RGB)"
+        window = "Visiona3D Live (RGB)"
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
         while True:
             result = self._latest_result()
@@ -779,8 +1125,10 @@ class LiveRunner:
             key = cv2.waitKey(15) & 0xFF
             if key in (27, ord("q")):
                 break
-            if key == ord("s"):
+            if key == ord("m"):
                 self._toggle_speech()
+            elif key == ord("s") and not self._voice_ready:
+                self._voice_unavailable_hint()
             if result is not None:
                 self._last_written_seq = result.seq
             if self._finished.is_set():
@@ -811,6 +1159,7 @@ class LiveRunner:
             nearest=result.nearest,
             bev_panel=panel,
             status_line=result.status_line,
+            goal_line=result.goal_line,
             frame_age_s=time.monotonic() - result.capture_ts,
             process_ms=result.process_ms,
             fps=self._fps(),
@@ -844,7 +1193,8 @@ class LiveRunner:
         if self.speech is not None:
             try:
                 if self._speech_enabled:
-                    self.speech.unduck()
+                    if not self._voice_listening:
+                        self.speech.unduck()
                 else:
                     self.speech.duck()
             except Exception:  # noqa: BLE001
@@ -855,6 +1205,15 @@ class LiveRunner:
         self._stop.set()
         with self._cond:
             self._cond.notify_all()
+        voice = self._voice
+        self._voice = None
+        self._voice_ready = False
+        self._voice_listening = False
+        if voice is not None:
+            try:
+                voice.stop()
+            except Exception as exc:  # noqa: BLE001
+                self._errors.append(f"voice stop: {type(exc).__name__}: {exc}")
         for thread in self._threads:
             thread.join(timeout=10.0)
         if self._writer is not None:
@@ -865,6 +1224,14 @@ class LiveRunner:
                 self.speech.stop()
             except Exception:  # noqa: BLE001
                 pass
+        with self._goal_lock:
+            pending_events = self._pending_goal_events
+            self._pending_goal_events = []
+            last_index = self._last_index
+        for event_ts, event_kind, event_text in pending_events:
+            self.db.log_event(
+                self.session_id, last_index, event_ts, event_kind, event_text
+            )
         self.source.release()
         self.db.close()
 
@@ -874,6 +1241,20 @@ class LiveRunner:
             if self.session_id
             else {}
         )
+        with self._goal_lock:
+            tracker = self._goal_tracker
+        goal = (
+            None
+            if tracker is None
+            else {
+                "intent": tracker.spec.intent,
+                "candidates": list(tracker.spec.candidates),
+                "text": tracker.spec.text,
+                "complete": not tracker.active,
+                "arrival_distance_m": tracker.arrival_distance_m,
+                "arrival_stable_frames": tracker.stable_frames,
+            }
+        )
         return {
             "session_id": self.session_id,
             "database": str(self.db.path) if self.db.path else None,
@@ -881,6 +1262,12 @@ class LiveRunner:
             "capture_size": [self.info.width, self.info.height],
             "processing_size": [self.proc_w, self.proc_h],
             "profile": self.profile,
+            "goal": goal,
+            "goal_interpreter": (
+                f"gemini:{self._goal_agent.model}"
+                if self._goal_agent is not None and self._goal_agent.available
+                else "local"
+            ),
             "intrinsics_provenance": self.intrinsics_provenance,
             "uncalibrated": self.uncalibrated,
             "processed": self._processed,

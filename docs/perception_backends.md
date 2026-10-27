@@ -1,6 +1,6 @@
 # Perception backends and tools
 
-Research-only perception interfaces for Visiona-Walk. Real model wrappers are
+Research-only perception interfaces for Visiona3D. Real model wrappers are
 swappable; every automated test uses analytic fakes. No test loads a model,
 opens a camera, reads a video file or touches the network.
 
