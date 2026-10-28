@@ -46,8 +46,8 @@ python scripts\fetch_models.py --yes
 python starter.py
 ```
 
-A short menu appears. **Press Enter.** That starts the webcam with sensible
-defaults. Nothing else is required on the first run.
+Seven short questions appear. **Press Enter seven times.** That starts the
+webcam with sensible defaults. Nothing else is required on the first run.
 
 The first start can take up to about a minute while the models load. After
 that, a window opens with the camera view, coloured floor and wall areas,
@@ -55,33 +55,34 @@ boxes around objects, a small map on the right, and spoken guidance.
 
 To stop, click the picture and press **q**.
 
-If you are blind or cannot read the menu, just press Enter: the webcam starts
-and guidance is spoken. A helper only needs to launch the command once. To skip
-the menu entirely, use this one-line start:
+If you are blind or cannot read the questions, just press Enter: the webcam
+starts and guidance is spoken. A helper only needs to launch the command once.
+To skip the questions entirely, use this one-line start:
 
 ```powershell
-python starter.py --source 0 --hfov 70
+python starter.py --source 0 --hfov 75
 ```
 
 ---
 
-## The menu, explained
+## The questions, explained
 
-```
-======================= Visiona3D =======================
- 1) Start with my webcam             (recommended)
- 2) Start with a video file
- 3) Advanced options and calibration
- 0) Exit
-=========================================================
-```
+Every question is printed as `Question N of 7`, a one-line `example`, and
+`Enter yours [default]`. Press Enter to accept the default.
 
-| Choice | What happens | What you must know |
-| --- | --- | --- |
-| `1` or Enter | Starts the webcam immediately | Distances are estimates until the camera is calibrated |
-| `2` | Asks for a video file, then starts | Drag the file into the window and press Enter; the sample video is the default if it exists |
-| `3` | Opens advanced options | Only needed for calibration, recording or special flags |
-| `0` | Exits | - |
+| Question | Example answer | What it does | Default |
+| --- | --- | --- | --- |
+| 1. What should it look at? | `1` webcam, `2` video file | Video asks again for the path; drag the file into the window | `1` (webcam) |
+| 2. How many frames? | `10`, `60`, `100` | Fewer frames = faster run; blank means the whole video | all frames |
+| 3. Speed or quality? | `1` fast, `2` balanced, `3` quality | Model input-size profile | `1` (fast) |
+| 4. Spoken guidance? | `yes` / `no` (or `1` / `0`) | `no` also turns the microphone off | `yes` |
+| 5. Save the session map image? | `reports\session_map.png` or a folder | Writes the bird's-eye map with the trail and detected objects | `yes`, `reports/session_map.png` |
+| 6. Save an annotated video? | `reports\live\demo.mp4` | Also runs without a window; useful for recordings | `no` |
+| 7. Calibration file? | `reports\camera_intrinsics.json` | Blank estimates the lens; type `?` for calibration steps | blank (estimates) |
+
+Before the app starts, the exact command line equivalent to your answers is
+printed, so you can copy it and reuse it next time. Any command-line arguments
+skip the questions and are passed straight through.
 
 Rules that apply after it starts:
 
@@ -168,6 +169,17 @@ suppressed until the situation changes.
 The map is 2.5D: a top-down grid plus one 3D position per object. It is not a
 full 3D mesh.
 
+**Saved session map.** `--map-png reports\session_map.png` writes a standalone
+picture after every processed frame: the current 2.5D view around the camera,
+the path you have walked so far, the start point and a scale bar. Detected
+objects appear as labelled markers in world coordinates, one colour per class
+(same class = same colour, different classes differ), accumulated per track so
+objects met earlier on the walk stay on the map; nearby markers of the same
+class merge into one to absorb tracker ID churn. The trail is *estimated* from
+floor-plane motion between processed frames - there is no IMU or wheel odometry
+- so it drifts and is labelled as an estimate on the image. It is a convenience
+view for reviewing a session; guidance and safety never read it.
+
 **Video playback.** A video file plays on the wall clock. If the CPU needs
 longer than one video frame, older frames are skipped rather than queued, so
 the analysis and any spoken goal refer to the current video time instead of a
@@ -198,10 +210,10 @@ python scripts\calibrate_camera.py --images calib --board 9x6 --square 0.018 --o
   and replace this number.
 - Capture at the same resolution you will run at. A calibration made for a
   different resolution is rejected instead of being rescaled.
-- Then start `python starter.py`, choose `3` -> `1`, and enter
+- Then start `python starter.py` and answer question 7 with
   `reports\camera_intrinsics.json`.
 
-Advanced option `4` prints these same instructions inside the menu.
+Type `?` at question 7 to print these same instructions.
 
 ---
 
@@ -311,6 +323,7 @@ Every option is available directly on the same entry point. `python starter.py
 | `--loop` | Repeat the video |
 | `--no-realtime` | Read every frame back-to-back instead of keeping the video on the wall clock |
 | `--db path.db`, `--no-db` | Choose the database, or turn persistence off |
+| `--map-png path.png` | Save a top-down session map with the estimated walked trail after every processed frame |
 | `--summary-json file.json` | Write the run summary |
 
 Two useful examples:
@@ -419,7 +432,9 @@ local and not committed.
 
 - Not field-tested on a physical camera or with blind users.
 - The map is a 2.5D grid plus one 3D anchor per object, not a mesh.
-- Each frame builds its own grid; there is no odometry accumulation yet.
+- Each frame builds its own grid; BEV cells are not accumulated into a world
+  map. The saved `--map-png` trail is a separate display-only estimate and is
+  not used by guidance.
 - Monocular depth bias is uncorrected, including the 1.5 m arrival distance.
 - Voice goals and arrival thresholds are tested offline only; microphone,
   speech-to-text and real-room distances still need a field test. The Gemini

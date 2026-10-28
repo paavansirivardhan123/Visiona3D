@@ -33,6 +33,7 @@ from calibration.depth_interval_config import (
     DepthIntervalConfigError,
     load_depth_interval,
 )
+from geometry.lift import AnchorStatus
 from geometry.scale import ScaleEstimator
 from live import overlay as hud
 from live.anchors import (
@@ -52,6 +53,8 @@ from live.goals import (
     parse_goal_text,
 )
 from live.guidance_bridge import GuidanceAnnouncer
+from live.map_image import MapMeta, MapObject, render_session_map, save_session_map
+from live.trace import FloorPlane, SessionTrace
 from live.imaging import (
     DEFAULT_PROC_WIDTH,
     intrinsics_from_hfov,
@@ -91,6 +94,7 @@ from scripts.real_models_smoke import _yolo_weights, check_weights
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WEIGHTS = REPO_ROOT / "weights"
 DEFAULT_FLOOR_THRESHOLD = 0.90  # TO TUNE ON REAL DATA
+MAP_OBJECT_MERGE_M = 0.5  # TO TUNE ON REAL DATA
 
 PROFILE_SIZES = {
     # (segmentation input, depth input). Both are reduced model inputs, not
@@ -129,6 +133,7 @@ class LiveConfig:
     voice: bool = True
     headless: bool = False
     out_video: str | None = None
+    map_png: str | None = None
     video_fps: float = 4.0
     max_frames: int | None = None
     start_frame: int = 0
@@ -226,6 +231,9 @@ class LiveRunner:
         )
         self.estimator = ScaleEstimator(self.mount, ScaleConfig())
         self.tracker = ObjectTracker()
+        self.trace = SessionTrace() if config.map_png else None
+        self._map_objects: dict[int, MapObject] = {}
+        self._map_error_reported = False
 
         self._goal_lock = threading.Lock()
         self._goal_tracker = build_goal_tracker(
@@ -653,6 +661,8 @@ class LiveRunner:
         else:
             statuses["frame"] = "no lift or segmentation; map unavailable"
 
+        self._update_trace(frame_bgr, outputs)
+
         if goal_tracker is not None and goal_tracker.active:
             with self._goal_lock:
                 if self._goal_tracker is goal_tracker:
@@ -704,6 +714,9 @@ class LiveRunner:
             )
 
         self._announce(guidance, observations, index)
+        self._write_map_image(
+            index, bev_grid, decision, heading, nearest, observations
+        )
 
         status_line = self._status_line(statuses, outputs)
         with self._result_lock:
@@ -752,6 +765,119 @@ class LiveRunner:
                 return normal / length
         pitch = math.radians(float(self.mount.pitch_deg))
         return np.array([0.0, math.cos(pitch), math.sin(pitch)], dtype=np.float64)
+
+    def _update_trace(self, frame_bgr: np.ndarray, outputs) -> None:
+        if self.trace is None:
+            return
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        plane, floor_mask = self._trace_plane(outputs)
+        self.trace.update_frame(
+            gray,
+            plane,
+            floor_mask,
+            self.K,
+            ts=time.monotonic(),
+        )
+
+    def _trace_plane(self, outputs) -> tuple[FloorPlane | None, np.ndarray | None]:
+        lift = getattr(outputs, "lift", None)
+        seg = getattr(outputs, "seg", None)
+        if lift is None or seg is None:
+            return None, None
+        fit = getattr(lift, "plane_fit", None)
+        scale = getattr(lift, "scale_result", None)
+        if fit is None or scale is None or fit.status.value != "OK":
+            return None, None
+        height_m = float(fit.h_hat) * float(scale.s)
+        normal = np.asarray(fit.n, dtype=np.float64)
+        if not math.isfinite(height_m) or height_m <= 0.0:
+            return None, None
+        if normal.shape != (3,) or not np.isfinite(normal).all():
+            return None, None
+        length = float(np.linalg.norm(normal))
+        if length <= 1e-9:
+            return None, None
+        floor_mask = np.asarray(seg.labels) == 1
+        return FloorPlane(normal=normal / length, height_m=height_m), floor_mask
+
+    def _record_map_objects(self, observations: list[ObjectAnchor] | None) -> None:
+        """Place current-frame anchors in world coordinates for the map.
+
+        Positions are expressed in the camera ground frame at observation time,
+        so they are rotated by the pose the trail had when the frame was
+        processed. Entries are keyed by track ID. A second track of the same
+        class within ``MAP_OBJECT_MERGE_M`` of an existing marker is dropped:
+        the IoU tracker re-creates IDs often, and without this the image fills
+        with duplicate labels for the same object.
+        """
+        if self.trace is None or not observations:
+            return
+        heading = math.radians(float(self.trace.heading_deg))
+        cos_h, sin_h = math.cos(heading), math.sin(heading)
+        for obs in observations:
+            if getattr(obs.status, "value", obs.status) != AnchorStatus.OK.value:
+                continue
+            lateral, forward = float(obs.position_g[0]), float(obs.position_g[1])
+            if not (math.isfinite(lateral) and math.isfinite(forward)):
+                continue
+            track_id = int(obs.track_id)
+            class_name = str(obs.class_name)
+            x = self.trace.x + cos_h * lateral + sin_h * forward
+            y = self.trace.y - sin_h * lateral + cos_h * forward
+            duplicate = any(
+                other.class_name == class_name
+                and other.track_id != track_id
+                and math.hypot(other.x - x, other.y - y) < MAP_OBJECT_MERGE_M
+                for other in self._map_objects.values()
+            )
+            if duplicate:
+                continue
+            self._map_objects[track_id] = MapObject(
+                class_name=class_name, x=x, y=y, track_id=track_id
+            )
+
+    def _write_map_image(
+        self,
+        index: int,
+        grid: np.ndarray | None,
+        decision: str,
+        heading_deg: float,
+        nearest: dict,
+        observations: list[ObjectAnchor] | None = None,
+    ) -> None:
+        if self.trace is None:
+            return
+        self._record_map_objects(observations)
+        nearest_m = nearest.get("distance_nominal_m")
+        meta = MapMeta(
+            session_id=self.session_id,
+            frame_index=index,
+            decision=decision,
+            heading_deg=self.trace.heading_deg,
+            nearest_m=(
+                float(nearest_m)
+                if nearest_m is not None and math.isfinite(float(nearest_m))
+                else None
+            ),
+            uncalibrated=bool(self.uncalibrated),
+            distance_m=self.trace.distance_m,
+            steps=self.trace.steps,
+            misses=self.trace.misses,
+        )
+        try:
+            image = render_session_map(
+                self.trace.points,
+                grid,
+                self.map_cfg,
+                heading_deg=self.trace.heading_deg,
+                meta=meta,
+                objects=tuple(self._map_objects.values()),
+            )
+            save_session_map(self.config.map_png, image)
+        except OSError as exc:
+            if not self._map_error_reported:
+                self._map_error_reported = True
+                print(f"  [Map] image not written: {exc}")
 
     def _status_line(self, statuses: dict, outputs) -> str:
         parts = [
@@ -1067,6 +1193,11 @@ class LiveRunner:
             playback = "every frame, no pacing (runs slower than real time)"
         print(f"  playback:    {playback}")
         print(f"  database:    {self.db.path if self.db.enabled else 'off'}")
+        if self.config.map_png:
+            print(
+                f"  map image:   {self.config.map_png} "
+                "(estimated trail; display only)"
+            )
         if self.session_id:
             print(f"  session:     {self.session_id}")
         if self.uncalibrated:

@@ -1,15 +1,15 @@
 """Visiona3D starter - the one public entry point.
 
-Interactive, no setup knowledge needed:
+Interactive, no setup knowledge needed - seven short questions:
     python starter.py
 
-Direct passthrough (every live option is forwarded):
+Direct passthrough (no questions, every live option forwarded):
     python starter.py --source 0 --hfov 70
     python starter.py --source sample-vid/FRONT/VID2.mp4 --intrinsics camera.json
 
-The first menu choice starts a webcam with an estimated field of view.
-Distances are then estimates; the HUD shows a red warning bar. Accurate metres
-require a one-time camera calibration, available under Advanced options.
+Every question shows an example and a default; press Enter to accept it.
+Without a calibration file the field of view is estimated, distances are
+estimates, and the HUD shows a red warning bar.
 
 While the live window is open, hold S to speak a goal and release to set it.
 Voice is optional; microphone or speech-recognition problems never stop
@@ -26,32 +26,19 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 DEFAULT_VIDEO = REPO_ROOT / "sample-vid" / "FRONT" / "VID2.mp4"
+DEFAULT_MAP = "reports/session_map.png"
+DEFAULT_VIDEO_OUT = "reports/live/demo.mp4"
+DEFAULT_HFOV = "75"
+QUESTIONS = 7
 
-MENU = """
-======================= Visiona3D =======================
- 1) Start with my webcam             (recommended)
- 2) Start with a video file
- 3) Advanced options and calibration
- 0) Exit
-=========================================================
+PROFILES = {"1": "fast", "2": "balanced", "3": "quality"}
 
-Guidance is spoken automatically. Hold S to say a goal
-(for example "I want to sit"), then release. Press m to
-mute speech and q to quit. The first start can take up
-to a minute while the models load.
-
-Press 1, 2, 3 or 0 and then Enter. Pressing Enter alone
-starts the webcam.
-"""
-
-ADVANCED_MENU = """
-=================== Advanced options ===================
- 1) Webcam with a calibration file (accurate metres)
- 2) Video with a calibration file
- 3) Show every command-line option
- 4) How to make a calibration file
- 0) Back
-=======================================================
+HEADER = """
+============================ Visiona3D ============================
+ Seven short questions: input, frames, speed, speech, map image,
+ annotated video and calibration. Press Enter to accept [default].
+ After it starts: hold S for a voice goal, m mutes, q quits.
+===================================================================
 """
 
 CALIBRATION_HELP = """
@@ -66,7 +53,7 @@ printed checkerboard with 9x6 inner corners.
    python scripts\\calibrate_camera.py --images calib --board 9x6 --square 0.018 --out reports\\camera_intrinsics.json
 
    Replace 0.018 with your measured square size.
-3. Use Advanced option 1 and enter reports\\camera_intrinsics.json.
+3. Enter reports\\camera_intrinsics.json at the calibration question.
 
 Capture at the same resolution you will run at. A file made
 for another resolution is rejected instead of being rescaled.
@@ -77,15 +64,191 @@ def _ask(text: str) -> str:
     return input(text).strip().strip('"').strip("'")
 
 
-def _ask_path(text: str, default: Path | None = None) -> Path | None:
+def _question(
+    index: int | None, question: str, example: str, default: str = ""
+) -> str:
+    if index is None:
+        print(f"\n  {question}")
+    else:
+        print(f"\nQuestion {index} of {QUESTIONS}: {question}")
+    print(f"  example: {example}")
+    hint = f" [{default}]" if default else ""
+    return _ask(f"  Enter yours{hint}: ")
+
+
+def _ask_choice(
+    index: int, question: str, example: str, options: dict[str, str], default: str
+) -> str:
     while True:
-        raw = _ask(text)
+        raw = _question(index, question, example, default) or default
+        if raw in options:
+            return raw
+        print(f"  Enter {' or '.join(options)}.")
+
+
+def _ask_yes_no(index: int, question: str, default: bool) -> bool:
+    while True:
+        raw = _question(index, question, "yes or no", "yes" if default else "no").lower()
+        if not raw:
+            return default
+        if raw in ("y", "yes", "1"):
+            return True
+        if raw in ("n", "no", "0"):
+            return False
+        print("  Enter yes or no (1 and 0 work too).")
+
+
+def _ask_frames(index: int) -> int | None:
+    while True:
+        raw = _question(
+            index,
+            "How many frames should it analyse? (fewer = faster)",
+            "10, 60, 100   (Enter = the whole video)",
+        )
+        if not raw:
+            return None
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        print("  Enter a whole number like 10, 60 or 100, or press Enter for all frames.")
+
+
+def _ask_input_file(
+    index: int | None, question: str, example: str, default: Path | None
+) -> Path | None:
+    label = str(default) if default is not None else ""
+    while True:
+        raw = _question(index, question, example, label)
         if not raw:
             return default
         path = Path(raw).expanduser()
         if path.exists():
             return path
-        print(f"  Not found: {path}. Try again, or press Enter to go back.")
+        print(f"  Not found: {path}. Try again, or press Enter for the default.")
+
+
+def _ask_output(
+    index: int | None, question: str, example: str, default: str, suffix: str
+) -> Path:
+    raw = _question(index, question, example, default)
+    if not raw:
+        return Path(default)
+    path = Path(raw).expanduser()
+    if raw.endswith(("\\", "/")) or path.is_dir():
+        path = path / Path(default).name
+    if path.suffix == "":
+        path = path.with_suffix(suffix)
+    return path
+
+
+def _ask_calibration(index: int) -> str | None:
+    while True:
+        raw = _question(
+            index,
+            "Calibration file for accurate metres (Enter = estimate the field of view)",
+            "reports\\camera_intrinsics.json   (type ? for calibration steps)",
+        )
+        if not raw:
+            return None
+        if raw == "?":
+            print(CALIBRATION_HELP)
+            continue
+        path = Path(raw).expanduser()
+        if path.exists():
+            return str(path)
+        print(f"  Not found: {path}. Press Enter to estimate instead, or ? for help.")
+
+
+def questions() -> list[str]:
+    """Ask the seven questions and return the equivalent CLI arguments."""
+    print(HEADER)
+    args: list[str] = []
+
+    mode = _ask_choice(
+        1,
+        "What should it look at?",
+        "1 = my webcam, 2 = a video file",
+        {"1": "webcam", "2": "video"},
+        "1",
+    )
+    if mode == "1":
+        args += ["--source", "0"]
+    else:
+        source = _ask_input_file(
+            None,
+            "Which video file?",
+            "C:\\videos\\walk.mp4   (drag the file into this window)",
+            DEFAULT_VIDEO if DEFAULT_VIDEO.exists() else None,
+        )
+        if source is None:
+            print("  No video entered; starting the webcam instead.")
+            args += ["--source", "0"]
+        else:
+            args += ["--source", str(source)]
+
+    frames = _ask_frames(2)
+    if frames is not None:
+        args += ["--max-frames", str(frames)]
+
+    profile = _ask_choice(
+        3,
+        "Speed or quality?",
+        "1 = fast, 2 = balanced, 3 = quality",
+        PROFILES,
+        "1",
+    )
+    args += ["--profile", PROFILES[profile]]
+
+    if not _ask_yes_no(4, "Do you need spoken guidance?", True):
+        args += ["--no-speech", "--no-voice"]
+
+    if _ask_yes_no(5, "Save the session map image?", True):
+        image = _ask_output(
+            None,
+            "Where should the image go? A file or a folder works.",
+            "reports\\session_map.png   (or a folder, e.g. reports\\)",
+            DEFAULT_MAP,
+            ".png",
+        )
+        args += ["--map-png", str(image)]
+
+    if _ask_yes_no(
+        6, "Also save an annotated video of the HUD? (runs without a window)", False
+    ):
+        video = _ask_output(
+            None,
+            "Where should the video go?",
+            "reports\\live\\demo.mp4",
+            DEFAULT_VIDEO_OUT,
+            ".mp4",
+        )
+        args += ["--out-video", str(video), "--headless"]
+
+    intrinsics = _ask_calibration(7)
+    if intrinsics:
+        args += ["--intrinsics", intrinsics]
+    else:
+        print(f"  Using a {DEFAULT_HFOV} deg field of view; distances are estimates.")
+        args += ["--hfov", DEFAULT_HFOV]
+
+    return args
+
+
+def _preview(args: list[str]) -> None:
+    print("\n-------------------------------------------------------------------")
+    print(" Starting with:")
+    index = 0
+    while index < len(args):
+        key = args[index]
+        value = ""
+        if index + 1 < len(args) and not args[index + 1].startswith("--"):
+            value = args[index + 1]
+        if value:
+            print(f"   {key:<14} {value}")
+            index += 2
+        else:
+            print(f"   {key}")
+            index += 1
+    print("-------------------------------------------------------------------")
 
 
 def _run(args: list[str]) -> int:
@@ -94,100 +257,19 @@ def _run(args: list[str]) -> int:
     return live_main(args)
 
 
-def _pause() -> bool:
-    try:
-        input("\nPress Enter to return to the menu...")
-        return True
-    except EOFError:
-        return False
-
-
-def _launch(args: list[str], estimated: bool) -> bool:
-    print()
-    if estimated:
-        print("  No camera calibration file is used, so distances are estimates.")
-        print("  The red bar at the top of the picture means the same thing.")
+def menu() -> int:
+    args = questions()
+    _preview(args)
     try:
         code = _run(args)
     except KeyboardInterrupt:
         print("\n  Run interrupted.")
-        code = 0
+        return 0
     if code:
         print(f"\n  The run ended with code {code}. See the message above.")
-        if args[:2] == ["--source", "0"]:
-            print("  No webcam? Start again and choose option 2 for a video file.")
-    return _pause()
-
-
-def _start_webcam(calibrated: bool) -> bool:
-    if calibrated:
-        intrinsics = _ask_path("Calibration file path: ")
-        if intrinsics is None:
-            print("  No file entered; returning to the menu.")
-            return True
-        return _launch(["--source", "0", "--intrinsics", str(intrinsics)], False)
-    return _launch(["--source", "0", "--hfov", "70"], True)
-
-
-def _start_video(calibrated: bool) -> bool:
-    hint = f"Video file path [{DEFAULT_VIDEO}]" if DEFAULT_VIDEO.exists() else "Video file path"
-    print("\n  Tip: drag the video file into this window and press Enter.")
-    source = _ask_path(f"  {hint}: ", DEFAULT_VIDEO if DEFAULT_VIDEO.exists() else None)
-    if source is None:
-        print("  No video file entered; returning to the menu.")
-        return True
-    args = ["--source", str(source)]
-    if calibrated:
-        intrinsics = _ask_path("Calibration file path: ")
-        if intrinsics is None:
-            print("  No file entered; returning to the menu.")
-            return True
-        args += ["--intrinsics", str(intrinsics)]
-        return _launch(args, False)
-    return _launch(args + ["--hfov", "70"], True)
-
-
-def advanced_menu() -> None:
-    while True:
-        print(ADVANCED_MENU)
-        choice = _ask("Choice [0]: ") or "0"
-        if choice == "0":
-            return
-        if choice == "1":
-            if not _start_webcam(calibrated=True):
-                return
-        elif choice == "2":
-            if not _start_video(calibrated=True):
-                return
-        elif choice == "3":
-            _run(["--help"])
-            if not _pause():
-                return
-        elif choice == "4":
-            print(CALIBRATION_HELP)
-            if not _pause():
-                return
-        else:
-            print("  Enter 0-4.")
-
-
-def menu() -> int:
-    while True:
-        print(MENU)
-        choice = _ask("Choice [1]: ") or "1"
-        if choice == "0":
-            return 0
-        if choice == "3":
-            advanced_menu()
-            continue
-        if choice == "1":
-            if not _start_webcam(calibrated=False):
-                return 0
-        elif choice == "2":
-            if not _start_video(calibrated=False):
-                return 0
-        else:
-            print("  Enter 0-3.")
+        if "--source" in args and args[args.index("--source") + 1] == "0":
+            print("  No webcam? Run again and choose 2 for a video file.")
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -199,10 +281,16 @@ def main(argv: list[str] | None = None) -> int:
             print("\nInterrupted.", file=sys.stderr)
             return 130
     try:
-        return menu()
+        code = menu()
     except (EOFError, KeyboardInterrupt):
         print()
         return 0
+    if sys.stdin.isatty():
+        try:
+            input("\nPress Enter to close...")
+        except (EOFError, KeyboardInterrupt):
+            pass
+    return code
 
 
 if __name__ == "__main__":

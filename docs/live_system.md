@@ -20,7 +20,8 @@ the same process and on the same frame.
 ## Run it
 
 ```powershell
-# Public entry point: choose webcam or video from the menu
+# Public entry point: seven short questions (input, frames, speed, speech,
+# map image, annotated video, calibration); Enter accepts each default
 python starter.py
 
 # Real camera, calibrated intrinsics (the only measured mode)
@@ -125,6 +126,44 @@ GPU (`device=` on the backends) raise the rate. No timing here is a promise.
   (lower bound when a conformal depth interval is supplied).
 - **Goal strip:** the active intent, the class currently targeted (with its
   depth) or the full candidate search list, and `reached` after arrival.
+- **Session map image (`--map-png`):** a standalone PNG rewritten after every
+  processed frame with the current 2.5D view, the estimated walked trail, the
+  detected objects, the start point, the camera heading and a scale bar. Every
+  object with a certified 3D anchor is drawn as a labelled marker: one colour
+  per class name, assigned in sorted order, so the same class always keeps the
+  same colour and different classes differ (twelve colours; they repeat beyond
+  twelve classes in one image). A label is skipped when it would overlap an
+  already drawn one, so dense scenes stay readable; the marker is still drawn,
+  and a small legend lists the colour of every class present. Markers are accumulated per track ID in world
+  coordinates, so the image shows the objects met along the path rather than
+  only the last frame. Because the IoU tracker re-creates IDs when a track
+  drops, a new track of the same class within 0.5 m of an existing marker is
+  merged into it (`MAP_OBJECT_MERGE_M`, TO TUNE ON REAL DATA) instead of adding
+  a duplicate label. The footer states that the trail is estimated. Nothing
+  reads the file back.
+
+### Estimated trail (display only)
+
+`live/trace.py` estimates camera motion between processed frames without an
+IMU. It tracks features inside the segmented floor, then fits three parameters -
+right step, forward step and yaw - to the motion those features would have under
+the fitted ground plane (`H = R_y(-yaw) (I - C n^T / h)`, `C = [dx, 0, dz]`).
+For a fixed yaw the model is linear in the two translations, so the translation
+is solved by robustly weighted least squares (a threshold that starts wide and
+narrows to 4 px, TO TUNE ON REAL DATA); yaw is found by a coarse scan plus a
+shrinking refinement. The metric scale comes from the plane distance `h`, not
+from monocular depth, so the step is only as good as the camera-height
+assumption (`--mount-height`, TO TUNE ON REAL DATA).
+
+Fitting lateral motion separately matters: a sideways step and a pan both shift
+the floor image sideways, and a fit that only estimated yaw would draw the trail
+along the camera's gaze instead of the direction actually travelled.
+
+A step is accepted only when the fit explains the tracked pixels better than a
+standing-still model. Rejected steps leave a gap in the trail instead of
+inventing motion. It assumes a flat floor, ignores lens distortion (the
+wide-angle demo intrinsics are not calibrated), and drifts with distance. It is
+a convenience picture, never a navigation input.
 
 ## Goals, voice input and arrival
 
@@ -236,9 +275,10 @@ network or API key in tests).
   The HUD is live but not video-rate.
 - **Uncalibrated demo intrinsics.** Distances from `--hfov` are estimates and
   are labelled as such in the HUD and the session row.
-- **No ego-motion yet.** Each frame produces its own grid; the rolling map in
-  `mapping/rolling.py` is not wired into the live loop, so BEV snapshots are
-  per-frame, not accumulated with odometry.
+- **No world-map accumulation.** Each frame produces its own BEV grid; the
+  rolling map in `mapping/rolling.py` is not wired into the live loop, so BEV
+  snapshots are per-frame. The `--map-png` trail is a separate display-only
+  estimate and does not move BEV cells into a world frame.
 - **Monocular depth bias.** Metric depth from an indoor Small checkpoint is
   used as-is; no per-camera affine calibration has been validated.
 - **Camera mode not exercised here.** The verified run used a video file; a

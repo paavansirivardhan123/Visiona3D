@@ -96,6 +96,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--headless", action="store_true", help="no window; use with --out-video")
     parser.add_argument("--out-video", default=None, help="write the annotated HUD to this MP4")
+    parser.add_argument(
+        "--map-png",
+        default=None,
+        help="write a top-down session map image with an ESTIMATED travelled trail (display only)",
+    )
     parser.add_argument("--video-fps", type=float, default=4.0, help="output video frame rate")
     parser.add_argument("--max-frames", type=int, default=None, help="stop after this many processed frames")
     parser.add_argument("--start-frame", type=int, default=0, help="skip to this video frame")
@@ -163,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
         voice=args.voice,
         headless=args.headless,
         out_video=args.out_video,
+        map_png=args.map_png,
         video_fps=args.video_fps,
         max_frames=args.max_frames,
         start_frame=args.start_frame,
