@@ -23,9 +23,10 @@ ignores lens distortion, so it is an estimate and not a measurement.
 
 Conventions match ``Odometry2D`` in the ground frame G: X right, Y forward,
 positive yaw = clockwise. Camera coordinates follow OpenCV: X right, Y down,
-Z forward. A step is rejected when tracking is weak or the fit is poor; the
-trail then keeps its last known point and records a gap instead of inventing
-motion.
+Z forward. A step is rejected when tracking is weak, the fit is poor, or the
+motion would exceed a plausible walking speed or turn rate for the elapsed time
+between the two frames. The trail then keeps its last known point and records a
+gap instead of inventing motion.
 """
 
 from __future__ import annotations
@@ -52,15 +53,19 @@ MIN_PLANE_HEIGHT_M: float = 0.2  # TO TUNE ON REAL DATA
 MAX_PLANE_HEIGHT_M: float = 3.0  # TO TUNE ON REAL DATA
 MAX_MEDIAN_ERR_PX: float = 10.0  # TO TUNE ON REAL DATA
 MIN_ERR_GAIN_PX: float = 1.0  # TO TUNE ON REAL DATA
-MAX_STEP_M: float = 2.0  # TO TUNE ON REAL DATA
-MAX_STEP_YAW_DEG: float = 20.0  # TO TUNE ON REAL DATA
-SEARCH_YAW_DEG: float = 12.0  # TO TUNE ON REAL DATA
+MAX_STEP_M: float = 2.0  # TO TUNE ON REAL DATA: fixed fallback when elapsed time is unknown
+MAX_STEP_YAW_DEG: float = 20.0  # TO TUNE ON REAL DATA: fixed fallback when elapsed time is unknown
+MAX_SPEED_MPS: float = 2.5  # TO TUNE ON REAL DATA: plausible walking speed for the time-scaled step gate
+MAX_YAW_RATE_DPS: float = 60.0  # TO TUNE ON REAL DATA: plausible turn rate for the time-scaled yaw gate
+SEARCH_YAW_DEG: float = 12.0  # TO TUNE ON REAL DATA: fixed fallback yaw search half-range
+SEARCH_YAW_CAP_DEG: float = 45.0  # TO TUNE ON REAL DATA: widest yaw search as elapsed time grows
 COARSE_YAW_DEG: float = 1.0  # TO TUNE ON REAL DATA
 FINE_YAW_DEG: float = 0.1  # TO TUNE ON REAL DATA
 IRLS_C_PX: float = 4.0  # TO TUNE ON REAL DATA
 IRLS_C_START_PX: float = 40.0  # TO TUNE ON REAL DATA
 IRLS_STEPS: int = 4  # TO TUNE ON REAL DATA
-MAX_STEP_S: float = 4.0  # TO TUNE ON REAL DATA
+MAX_TRACE_GAP_S: float = 8.0  # TO TUNE ON REAL DATA: longer gaps restart the trail reference
+TRACE_MIN_BASELINE_S: float = 0.5  # TO TUNE ON REAL DATA: short baselines are unmeasurable
 MAX_MISSES_BEFORE_RESET: int = 3  # TO TUNE ON REAL DATA
 
 
@@ -238,6 +243,36 @@ def _fit_at_yaw(
     return cost, solution[0], solution[1], err
 
 
+def _motion_gates(
+    dt_s: Optional[float],
+    max_step_m: float,
+    max_step_yaw_deg: float,
+) -> tuple[float, float, float, float]:
+    """Return (step limit, yaw limit, search half-range, coarse yaw step).
+
+    With an elapsed time the gates grow at a plausible walking speed and turn
+    rate, so slow processing (large gaps between handled frames) does not look
+    like an impossible jump. Without a usable time the fixed starting values
+    apply. The yaw gate never exceeds the range the scan actually searches, and
+    the coarse step is widened with the range so the scan keeps its cost.
+    """
+    limit_m = float(max_step_m)
+    limit_yaw = float(max_step_yaw_deg)
+    search_yaw = float(SEARCH_YAW_DEG)
+    coarse = float(COARSE_YAW_DEG)
+    if dt_s is None:
+        return limit_m, limit_yaw, search_yaw, coarse
+    dt = float(dt_s)
+    if not math.isfinite(dt) or dt <= 0.0:
+        return limit_m, limit_yaw, search_yaw, coarse
+    limit_m = max(limit_m, float(MAX_SPEED_MPS) * dt)
+    rate_yaw = min(float(MAX_YAW_RATE_DPS) * dt, float(SEARCH_YAW_CAP_DEG))
+    limit_yaw = max(limit_yaw, rate_yaw)
+    search_yaw = min(max(search_yaw, rate_yaw), float(SEARCH_YAW_CAP_DEG))
+    coarse = max(coarse, search_yaw / (float(SEARCH_YAW_DEG) / float(COARSE_YAW_DEG)))
+    return limit_m, limit_yaw, search_yaw, coarse
+
+
 def fit_floor_motion(
     src_px: np.ndarray,
     dst_px: np.ndarray,
@@ -249,12 +284,17 @@ def fit_floor_motion(
     min_err_gain_px: float = MIN_ERR_GAIN_PX,
     max_step_m: float = MAX_STEP_M,
     max_step_yaw_deg: float = MAX_STEP_YAW_DEG,
+    dt_s: Optional[float] = None,
 ) -> Optional[Odometry2D]:
     """Fit lateral step, forward step and yaw that explain tracked floor motion.
 
     Returns the accepted step in ground-frame axes (X right, Y forward,
     clockwise yaw), or None when the correspondences are too few, the plane is
     implausible, or the fitted motion does not beat the standing-still model.
+
+    ``dt_s`` is the elapsed time between the two frames. When it is usable the
+    motion gates and the yaw search widen with it; when it is None the fixed
+    fallback limits apply.
     """
     src = np.asarray(src_px, dtype=np.float64)
     dst = np.asarray(dst_px, dtype=np.float64)
@@ -267,22 +307,25 @@ def fit_floor_motion(
     if not _valid_plane(plane):
         return None
 
+    limit_m, limit_yaw, search_yaw, coarse = _motion_gates(
+        dt_s, max_step_m, max_step_yaw_deg
+    )
     Km = _camera_matrix(K)
     rays = _rays(src, np.linalg.inv(Km))
     still_err = _median_error(rays, dst, np.eye(3), Km)
 
     best: Optional[tuple[float, float, float, float, np.ndarray]] = None
-    for yaw in np.arange(-SEARCH_YAW_DEG, SEARCH_YAW_DEG + 1e-9, COARSE_YAW_DEG):
+    for yaw in np.arange(-search_yaw, search_yaw + 1e-9, coarse):
         fit = _fit_at_yaw(rays, dst, plane, Km, float(yaw))
         if fit is not None and (best is None or fit[0] < best[0]):
             best = (fit[0], float(yaw), fit[1], fit[2], fit[3])
     if best is None:
         return None
 
-    step = float(COARSE_YAW_DEG)
+    step = float(coarse)
     while step > float(FINE_YAW_DEG) + 1e-9:
         for yaw in (best[1] - step, best[1] + step):
-            if abs(yaw) > float(SEARCH_YAW_DEG) + 1e-9:
+            if abs(yaw) > float(search_yaw) + 1e-9:
                 continue
             fit = _fit_at_yaw(rays, dst, plane, Km, yaw)
             if fit is not None and fit[0] < best[0]:
@@ -296,9 +339,9 @@ def fit_floor_motion(
         return None
     if still_err - err < float(min_err_gain_px):
         return None
-    if math.hypot(float(dx), float(dz)) > float(max_step_m):
+    if math.hypot(float(dx), float(dz)) > float(limit_m):
         return None
-    if abs(float(yaw)) > float(max_step_yaw_deg):
+    if abs(float(yaw)) > float(limit_yaw):
         return None
     return Odometry2D(dx=float(dx), dy=float(dz), dyaw_deg=float(yaw))
 
@@ -365,12 +408,14 @@ def estimate_floor_step(
     prev_floor_mask: np.ndarray,
     plane: FloorPlane,
     K: Intrinsics,
+    *,
+    dt_s: Optional[float] = None,
 ) -> Optional[Odometry2D]:
     """Track floor features and fit the metric floor-plane step."""
     tracked = track_floor_features(prev_gray, curr_gray, prev_floor_mask)
     if tracked is None:
         return None
-    return fit_floor_motion(tracked[0], tracked[1], plane, K)
+    return fit_floor_motion(tracked[0], tracked[1], plane, K, dt_s=dt_s)
 
 
 @dataclass
@@ -383,6 +428,7 @@ class SessionTrace:
     distance_m: float = 0.0
     steps: int = 0
     misses: int = 0
+    gaps: int = 0
 
     def __post_init__(self) -> None:
         self.points: list[tuple[float, float]] = [(0.0, 0.0)]
@@ -434,6 +480,7 @@ class SessionTrace:
     ) -> Optional[Odometry2D]:
         """Add one processed frame. Returns the accepted step, or None."""
         if plane is None or floor_mask is None or not _valid_plane(plane):
+            self.gaps += 1
             self.misses += 1
             if self.misses >= MAX_MISSES_BEFORE_RESET:
                 self._drop_reference()
@@ -441,20 +488,35 @@ class SessionTrace:
         if self._prev_gray is None or self._prev_mask is None or self._prev_plane is None:
             self._store(gray, floor_mask, plane, ts)
             return None
-        if (
-            ts is not None
-            and self._prev_ts is not None
-            and float(ts) - self._prev_ts > MAX_STEP_S
-        ):
-            self.misses += 1
-            self._store(gray, floor_mask, plane, ts)
+
+        dt: float | None = None
+        if ts is not None and self._prev_ts is not None:
+            elapsed = float(ts) - self._prev_ts
+            if elapsed > float(MAX_TRACE_GAP_S):
+                self.gaps += 1
+                self.misses += 1
+                self._store(gray, floor_mask, plane, ts)
+                return None
+            if math.isfinite(elapsed) and elapsed > 0.0:
+                dt = elapsed
+
+        if dt is not None and dt < float(TRACE_MIN_BASELINE_S):
+            # Adjacent high-rate frames move only a pixel or two; the standing
+            # still model wins and no step would ever be accepted. Keep the
+            # older reference and wait for a baseline long enough to measure.
             return None
 
         step = estimate_floor_step(
-            self._prev_gray, gray, self._prev_mask, self._prev_plane, K
+            self._prev_gray,
+            gray,
+            self._prev_mask,
+            self._prev_plane,
+            K,
+            dt_s=dt,
         )
         self._store(gray, floor_mask, plane, ts)
         if step is None:
+            self.gaps += 1
             self.misses += 1
             if self.misses >= MAX_MISSES_BEFORE_RESET:
                 self._drop_reference()

@@ -24,8 +24,8 @@ from mapping.grid import (
     cell_to_world,
 )
 
-TRAIL_BGR = (255, 190, 0)
-START_BGR = (90, 220, 90)
+TRAIL_BGR = (60, 200, 60)  # green: the route actually walked
+START_BGR = (245, 245, 245)  # white: start dot
 CAMERA_BGR = (0, 220, 255)
 OBS_BGR = (70, 70, 230)
 TEXT_BGR = (235, 235, 235)
@@ -34,6 +34,20 @@ WARN_BGR = (80, 200, 255)
 BG_BGR = (26, 26, 26)
 GRID_BGR = (48, 48, 48)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+MAP_ZONE_CELL_M: float = 0.2  # TO TUNE ON REAL DATA: world cell of the zone layer
+ZONE_ALPHA: float = 0.55  # TO TUNE ON REAL DATA: zone fill opacity
+ZONE_WALKABLE_BGR = (215, 120, 30)  # blue: certified free floor
+ZONE_WALL_BGR = (150, 150, 150)  # grey: wall structure
+ZONE_DANGER_BGR = (40, 40, 240)  # bright red: obstacle / blocked
+ZONE_UNKNOWN_BGR = (30, 30, 115)  # dark red: never detected
+ZONE_BGR = {
+    "walkable": ZONE_WALKABLE_BGR,
+    "wall": ZONE_WALL_BGR,
+    "danger": ZONE_DANGER_BGR,
+    "unknown": ZONE_UNKNOWN_BGR,
+}
+_ZONE_DRAW_ORDER = ("unknown", "walkable", "danger", "wall")
 
 # One colour per class, assigned in sorted class-name order. Neighbouring
 # entries alternate across the hue wheel so alphabetically adjacent classes do
@@ -63,6 +77,33 @@ class MapObject:
     x: float
     y: float
     track_id: int = -1
+    last_seen: float = 0.0
+
+
+@dataclass(frozen=True)
+class MapZone:
+    """One accumulated ground cell in world metres.
+
+    ``kind`` is ``walkable``, ``wall``, ``danger`` or ``unknown``.
+    """
+
+    kind: str
+    x: float
+    y: float
+
+
+def trail_length_m(points: Sequence[tuple[float, float]]) -> float:
+    """Length of the drawn polyline in metres, skipping non-finite points."""
+    total = 0.0
+    previous: tuple[float, float] | None = None
+    for x, y in points:
+        x, y = float(x), float(y)
+        if not (math.isfinite(x) and math.isfinite(y)):
+            continue
+        if previous is not None:
+            total += math.hypot(x - previous[0], y - previous[1])
+        previous = (x, y)
+    return total
 
 
 def object_colors(names: Sequence[str]) -> dict[str, tuple[int, int, int]]:
@@ -87,6 +128,7 @@ class MapMeta:
     distance_m: float = 0.0
     steps: int = 0
     misses: int = 0
+    gaps: int = 0
 
 
 def _world_to_px(
@@ -194,11 +236,15 @@ def _draw_object_legend(
     image: np.ndarray,
     colours: dict[str, tuple[int, int, int]],
     bounds: tuple[int, int, int, int],
-) -> None:
-    """Draw a colour key for the classes present, inside the map area."""
+) -> int:
+    """Draw a colour key for the classes present, inside the map area.
+
+    Returns the y coordinate just below the panel, so another legend can be
+    stacked underneath, or 0 when nothing was drawn.
+    """
     names = sorted(colours)
     if not names:
-        return
+        return 0
     font_scale = 0.38
     row_h = 15
     widths = [
@@ -210,7 +256,7 @@ def _draw_object_legend(
     x1 = right - box_w
     y1 = top + 6
     if x1 < left or y1 + box_h > bottom:
-        return
+        return 0
     cv2.rectangle(image, (x1, y1), (x1 + box_w, y1 + box_h), BG_BGR, -1)
     cv2.rectangle(image, (x1, y1), (x1 + box_w, y1 + box_h), GRID_BGR, 1)
     for i, name in enumerate(names):
@@ -219,6 +265,96 @@ def _draw_object_legend(
         cv2.putText(
             image,
             name,
+            (x1 + 22, y + 4),
+            FONT,
+            font_scale,
+            TEXT_BGR,
+            1,
+            cv2.LINE_AA,
+        )
+    return y1 + box_h + 6
+
+
+def _draw_zones(
+    image: np.ndarray,
+    zones: Sequence[MapZone],
+    center: tuple[float, float],
+    scale: float,
+    origin: tuple[float, float],
+    bounds: tuple[int, int, int, int],
+    *,
+    zone_res: float = MAP_ZONE_CELL_M,
+    alpha: float = ZONE_ALPHA,
+) -> None:
+    """Paint the accumulated ground zones beneath the trail and markers.
+
+    Groups are drawn dark red, blue, bright red, grey so a wall cell always
+    covers a danger or free vote. The whole group is blended once, which keeps
+    the metre grid faintly visible instead of hiding it under opaque blocks.
+    """
+    if not zones:
+        return
+    left, top, right, bottom = bounds
+    size = max(1, int(round(float(zone_res) * scale)))
+    groups: dict[str, list[MapZone]] = {kind: [] for kind in _ZONE_DRAW_ORDER}
+    for zone in zones:
+        if zone.kind in groups and math.isfinite(zone.x) and math.isfinite(zone.y):
+            groups[zone.kind].append(zone)
+    if not any(groups.values()):
+        return
+
+    overlay = image.copy()
+    drew = False
+    for kind in _ZONE_DRAW_ORDER:
+        colour = ZONE_BGR[kind]
+        for zone in groups[kind]:
+            px, py = _world_to_px(zone.x, zone.y, center, scale, origin)
+            x0 = int(round(float(px) - size / 2.0))
+            y0 = int(round(float(py) - size / 2.0))
+            if x0 + size < left or x0 > right or y0 + size < top or y0 > bottom:
+                continue
+            cv2.rectangle(overlay, (x0, y0), (x0 + size, y0 + size), colour, -1)
+            drew = True
+    if drew:
+        cv2.addWeighted(overlay, float(alpha), image, 1.0 - float(alpha), 0.0, image)
+
+
+def _draw_zone_legend(
+    image: np.ndarray,
+    bounds: tuple[int, int, int, int],
+    summary: dict[str, float],
+    route_m: float,
+) -> None:
+    """Key for the zone colours plus the two measurements the user asked for."""
+    rows: list[tuple[tuple[int, int, int] | None, str]] = [
+        (ZONE_WALKABLE_BGR, "walkable (blue)"),
+        (ZONE_WALL_BGR, "wall (grey)"),
+        (ZONE_DANGER_BGR, "danger (bright red)"),
+        (ZONE_UNKNOWN_BGR, "not detected (dark red)"),
+        (None, f"route {route_m:.1f} m (green)"),
+        (None, f"walkable {summary.get('walkable', 0.0):.1f} m2 (blue)"),
+    ]
+    font_scale = 0.38
+    row_h = 15
+    widths = [
+        cv2.getTextSize(text, FONT, font_scale, 1)[0][0] for _, text in rows
+    ]
+    box_w = max(widths) + 34
+    box_h = 8 + row_h * len(rows)
+    left, top, right, bottom = bounds
+    x1 = left + 6
+    y1 = top + 24
+    if x1 + box_w > right or y1 + box_h > bottom:
+        return
+    cv2.rectangle(image, (x1, y1), (x1 + box_w, y1 + box_h), BG_BGR, -1)
+    cv2.rectangle(image, (x1, y1), (x1 + box_w, y1 + box_h), GRID_BGR, 1)
+    for i, (colour, text) in enumerate(rows):
+        y = y1 + 8 + row_h * i + row_h // 2
+        if colour is not None:
+            cv2.circle(image, (x1 + 12, y), 4, colour, -1, cv2.LINE_AA)
+        cv2.putText(
+            image,
+            text,
             (x1 + 22, y + 4),
             FONT,
             font_scale,
@@ -236,19 +372,23 @@ def render_session_map(
     heading_deg: float = 0.0,
     meta: MapMeta | None = None,
     objects: Sequence[MapObject] | None = None,
+    zones: Sequence[MapZone] | None = None,
+    zone_res: float = MAP_ZONE_CELL_M,
     show_legend: bool = True,
     size: tuple[int, int] = (900, 920),
 ) -> np.ndarray:
     """Render a top-down session map with the estimated trail.
 
     ``objects`` are world-frame positions of detected objects; they are drawn
-    with a class label and a colour that is fixed per class name.
+    with a class label and a colour that is fixed per class name. ``zones`` are
+    accumulated ground cells (walkable, wall, danger, unknown) painted under
+    the route; the legend reports the route length and the walkable area.
     """
     if cfg is None:
         cfg = MapConfig()
     width, height = int(size[0]), int(size[1])
     header_h = 52
-    footer_h = 78
+    footer_h = 104
     margin = 18
     image = np.full((height, width, 3), BG_BGR, dtype=np.uint8)
 
@@ -259,8 +399,15 @@ def render_session_map(
         for obj in (objects or ())
         if math.isfinite(float(obj.x)) and math.isfinite(float(obj.y))
     ]
+    zone_pts = [
+        (float(zone.x), float(zone.y))
+        for zone in (zones or ())
+        if math.isfinite(float(zone.x)) and math.isfinite(float(zone.y))
+    ]
     xs = [p[0] for p in trail] + [0.0, current[0]] + [p[0] for p in seen]
     ys = [p[1] for p in trail] + [0.0, current[1]] + [p[1] for p in seen]
+    xs += [p[0] for p in zone_pts]
+    ys += [p[1] for p in zone_pts]
     span_x = max(max(xs) - min(xs), 8.0)
     span_y = max(max(ys) - min(ys), 8.0)
     pad_m = max(2.5, 0.08 * max(span_x, span_y))
@@ -302,6 +449,30 @@ def render_session_map(
         )
         value += step_m
 
+    map_bounds = (
+        margin,
+        header_h + margin,
+        width - margin,
+        height - footer_h - margin,
+    )
+
+    zone_counts = {"walkable": 0, "wall": 0, "danger": 0, "unknown": 0}
+    for zone in zones or ():
+        if zone.kind in zone_counts:
+            zone_counts[zone.kind] += 1
+    free_area_m2 = zone_counts["walkable"] * float(zone_res) ** 2
+    route_m = trail_length_m(trail)
+
+    _draw_zones(
+        image,
+        zones or (),
+        (center_x, center_y),
+        scale,
+        origin,
+        map_bounds,
+        zone_res=zone_res,
+    )
+
     # World origin cross.
     ox, oy = _world_to_px(0.0, 0.0, (center_x, center_y), scale, origin)
     cv2.drawMarker(image, (int(ox), int(oy)), MUTED_BGR, cv2.MARKER_CROSS, 12, 1)
@@ -331,12 +502,8 @@ def render_session_map(
         (center_x, center_y),
         scale,
         origin,
-        (margin, header_h + margin, width - margin, height - footer_h - margin),
+        map_bounds,
     )
-
-    sx, sy = _world_to_px(trail[0][0], trail[0][1], (center_x, center_y), scale, origin)
-    cv2.circle(image, (int(sx), int(sy)), 5, START_BGR, -1, cv2.LINE_AA)
-    cv2.putText(image, "start", (int(sx) + 8, int(sy) - 6), FONT, 0.40, START_BGR, 1, cv2.LINE_AA)
 
     heading = math.radians(float(heading_deg))
     forward = np.array([math.sin(heading), math.cos(heading)])
@@ -351,16 +518,62 @@ def render_session_map(
     triangle = np.stack([np.asarray(tx), np.asarray(ty)], axis=1).astype(np.int32)
     cv2.fillConvexPoly(image, triangle, CAMERA_BGR, cv2.LINE_AA)
 
+    sx, sy = _world_to_px(trail[0][0], trail[0][1], (center_x, center_y), scale, origin)
+    cv2.circle(image, (int(sx), int(sy)), 5, START_BGR, -1, cv2.LINE_AA)
+    frozen = math.hypot(current[0] - trail[0][0], current[1] - trail[0][1]) < 0.05
+    if frozen:
+        cv2.putText(
+            image,
+            "START = NOW",
+            (int(sx) + 8, int(sy) - 6),
+            FONT,
+            0.40,
+            START_BGR,
+            1,
+            cv2.LINE_AA,
+        )
+    else:
+        cv2.putText(
+            image,
+            "START",
+            (int(sx) + 8, int(sy) - 6),
+            FONT,
+            0.40,
+            START_BGR,
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            image,
+            "NOW",
+            (int(tx[0]) + 8, int(ty[0]) + 16),
+            FONT,
+            0.40,
+            CAMERA_BGR,
+            1,
+            cv2.LINE_AA,
+        )
+
     if show_legend:
         _draw_object_legend(
             image,
             object_colors([obj.class_name for obj in (objects or ())]),
-            (margin, header_h + margin, width - margin, height - footer_h - margin),
+            map_bounds,
         )
+        if zones:
+            _draw_zone_legend(
+                image,
+                map_bounds,
+                {"walkable": free_area_m2},
+                route_m,
+            )
 
     cv2.putText(image, "Visiona3D session map", (margin, 24), FONT, 0.62, TEXT_BGR, 1, cv2.LINE_AA)
-    subtitle = "estimated trail; detected objects coloured and labelled by class"
-    cv2.putText(image, subtitle, (margin, 43), FONT, 0.40, MUTED_BGR, 1, cv2.LINE_AA)
+    subtitle = (
+        "green route; blue walkable; grey wall; bright red danger; "
+        "dark red not detected"
+    )
+    cv2.putText(image, subtitle, (margin, 43), FONT, 0.38, MUTED_BGR, 1, cv2.LINE_AA)
 
     footer_y = height - footer_h + 8
     cv2.putText(
@@ -375,7 +588,7 @@ def render_session_map(
     )
     cv2.putText(
         image,
-        "It drifts over distance. Display only - never used for guidance or safety.",
+        "It drifts over distance, and so do the zones. Display only - never used for guidance or safety.",
         (margin, footer_y + 30),
         FONT,
         0.42,
@@ -387,7 +600,7 @@ def render_session_map(
         line = (
             f"frame {meta.frame_index}   {meta.decision or 'NO_PERCEPTION'}   "
             f"heading {meta.heading_deg:+.0f} deg   travelled {meta.distance_m:.1f} m   "
-            f"steps {meta.steps}   gaps {meta.misses}"
+            f"steps {meta.steps}   gaps {meta.gaps if meta.gaps else meta.misses}"
         )
         cv2.putText(image, line, (margin, footer_y + 50), FONT, 0.42, TEXT_BGR, 1, cv2.LINE_AA)
         extra = []
@@ -405,6 +618,21 @@ def render_session_map(
                 FONT,
                 0.38,
                 WARN_BGR if meta.uncalibrated else MUTED_BGR,
+                1,
+                cv2.LINE_AA,
+            )
+        if meta.steps == 0:
+            cv2.putText(
+                image,
+                (
+                    "NO STEP ACCEPTED YET"
+                    f" ({meta.gaps if meta.gaps else meta.misses} gaps): "
+                    "START and NOW coincide, so the trail is frozen - not a missing feature."
+                ),
+                (margin, footer_y + 84),
+                FONT,
+                0.38,
+                WARN_BGR,
                 1,
                 cv2.LINE_AA,
             )
@@ -437,10 +665,18 @@ def save_session_map(path: str | Path, image: np.ndarray) -> Path:
 
 
 __all__ = [
+    "MAP_ZONE_CELL_M",
     "MapMeta",
     "MapObject",
+    "MapZone",
     "OBJECT_PALETTE_BGR",
+    "ZONE_BGR",
+    "ZONE_DANGER_BGR",
+    "ZONE_UNKNOWN_BGR",
+    "ZONE_WALKABLE_BGR",
+    "ZONE_WALL_BGR",
     "object_colors",
     "render_session_map",
     "save_session_map",
+    "trail_length_m",
 ]

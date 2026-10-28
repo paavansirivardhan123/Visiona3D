@@ -53,8 +53,14 @@ from live.goals import (
     parse_goal_text,
 )
 from live.guidance_bridge import GuidanceAnnouncer
-from live.map_image import MapMeta, MapObject, render_session_map, save_session_map
+from live.map_image import (
+    MapMeta,
+    MapObject,
+    render_session_map,
+    save_session_map,
+)
 from live.trace import FloorPlane, SessionTrace
+from live.zones import frame_zone_votes, merge_zone_votes, resolve_zones
 from live.imaging import (
     DEFAULT_PROC_WIDTH,
     intrinsics_from_hfov,
@@ -94,7 +100,11 @@ from scripts.real_models_smoke import _yolo_weights, check_weights
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_WEIGHTS = REPO_ROOT / "weights"
 DEFAULT_FLOOR_THRESHOLD = 0.90  # TO TUNE ON REAL DATA
-MAP_OBJECT_MERGE_M = 0.5  # TO TUNE ON REAL DATA
+MAP_OBJECT_GATE_M = 0.6  # TO TUNE ON REAL DATA: same-class marker search radius at zero age
+MAP_OBJECT_SPEED_MPS = 1.6  # TO TUNE ON REAL DATA: plausible target speed that widens the rebinding gate
+MAP_OBJECT_MAX_GATE_M = 8.0  # TO TUNE ON REAL DATA: upper bound for the rebinding gate
+MAP_OBJECT_TTL_S = 3.0  # TO TUNE ON REAL DATA: person marker disappears after this long unseen
+MAP_OBJECT_EXPIRING_CLASSES = frozenset({"person"})
 
 PROFILE_SIZES = {
     # (segmentation input, depth input). Both are reduced model inputs, not
@@ -233,6 +243,7 @@ class LiveRunner:
         self.tracker = ObjectTracker()
         self.trace = SessionTrace() if config.map_png else None
         self._map_objects: dict[int, MapObject] = {}
+        self._map_zones: dict[tuple[int, int], list[int]] = {}
         self._map_error_reported = False
 
         self._goal_lock = threading.Lock()
@@ -661,7 +672,11 @@ class LiveRunner:
         else:
             statuses["frame"] = "no lift or segmentation; map unavailable"
 
-        self._update_trace(frame_bgr, outputs)
+        self._update_trace(frame_bgr, outputs, ts=self._trace_time(index, capture_ts))
+        if bev_grid is not None and labels is not None and outputs.lift is not None:
+            self._record_map_zones(
+                bev_grid, labels, outputs.lift.point_map_g, observations
+            )
 
         if goal_tracker is not None and goal_tracker.active:
             with self._goal_lock:
@@ -715,7 +730,13 @@ class LiveRunner:
 
         self._announce(guidance, observations, index)
         self._write_map_image(
-            index, bev_grid, decision, heading, nearest, observations
+            index,
+            bev_grid,
+            decision,
+            heading,
+            nearest,
+            observations,
+            ts=self._trace_time(index, capture_ts),
         )
 
         status_line = self._status_line(statuses, outputs)
@@ -766,7 +787,28 @@ class LiveRunner:
         pitch = math.radians(float(self.mount.pitch_deg))
         return np.array([0.0, math.cos(pitch), math.sin(pitch)], dtype=np.float64)
 
-    def _update_trace(self, frame_bgr: np.ndarray, outputs) -> None:
+    def _trace_time(self, index: int, capture_ts: float) -> float:
+        """Elapsed-time base for the trail.
+
+        For a video file the analysis should advance with video time, not with
+        how fast the CPU happens to process frames; otherwise a non-realtime
+        run looks like a series of impossible jumps and the route freezes. A
+        camera has no recorded timeline, so wall-clock capture time is used.
+        """
+        info = getattr(self, "info", None)
+        if info is not None and not bool(getattr(info, "is_camera", True)):
+            fps = float(getattr(info, "fps", 0.0) or 0.0)
+            if math.isfinite(fps) and fps > 0.0:
+                return float(index) / fps
+        return float(capture_ts)
+
+    def _update_trace(
+        self,
+        frame_bgr: np.ndarray,
+        outputs,
+        *,
+        ts: float | None = None,
+    ) -> None:
         if self.trace is None:
             return
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
@@ -776,7 +818,7 @@ class LiveRunner:
             plane,
             floor_mask,
             self.K,
-            ts=time.monotonic(),
+            ts=time.monotonic() if ts is None else float(ts),
         )
 
     def _trace_plane(self, outputs) -> tuple[FloorPlane | None, np.ndarray | None]:
@@ -800,40 +842,147 @@ class LiveRunner:
         floor_mask = np.asarray(seg.labels) == 1
         return FloorPlane(normal=normal / length, height_m=height_m), floor_mask
 
-    def _record_map_objects(self, observations: list[ObjectAnchor] | None) -> None:
+    def _record_map_zones(
+        self,
+        bev_grid: np.ndarray,
+        labels: np.ndarray,
+        pointmap_g: np.ndarray,
+        observations: list[ObjectAnchor] | None,
+    ) -> None:
+        """Accumulate this frame's walkable / wall / danger cells in the world.
+
+        Display only: the estimate drifts exactly like the trail. A cell near a
+        detected object is not voted as danger so a person standing in front of
+        the camera cannot paint a permanent red zone.
+        """
+        store = getattr(self, "_map_zones", None)
+        if self.trace is None or store is None:
+            return
+        ok_anchors = [
+            obs
+            for obs in (observations or ())
+            if getattr(obs.status, "value", obs.status) == AnchorStatus.OK.value
+        ]
+        votes = frame_zone_votes(
+            bev_grid,
+            labels,
+            pointmap_g,
+            self.map_cfg,
+            pose=(self.trace.x, self.trace.y, self.trace.heading_deg),
+            objects=ok_anchors,
+        )
+        merge_zone_votes(store, votes)
+
+    def _expire_map_objects(self, now: float) -> None:
+        """Forget person markers that have not been re-detected for a while.
+
+        A person can walk out of view or be missed for several frames; keeping
+        the last marker forever would leave a ghost on the map. Static classes
+        (chairs, doors) are kept for the whole session.
+        """
+        store = getattr(self, "_map_objects", None)
+        if not store:
+            return
+        stale = [
+            key
+            for key, obj in store.items()
+            if obj.class_name in MAP_OBJECT_EXPIRING_CLASSES
+            and now - float(obj.last_seen) > float(MAP_OBJECT_TTL_S)
+        ]
+        for key in stale:
+            del store[key]
+
+    @staticmethod
+    def _free_marker_key(
+        store: dict[int, MapObject], used: set[int], track_id: int
+    ) -> int:
+        if track_id not in store and track_id not in used:
+            return int(track_id)
+        return max(list(store) + list(used) + [0]) + 1
+
+    def _record_map_objects(
+        self,
+        observations: list[ObjectAnchor] | None,
+        *,
+        now: float | None = None,
+    ) -> None:
         """Place current-frame anchors in world coordinates for the map.
 
         Positions are expressed in the camera ground frame at observation time,
         so they are rotated by the pose the trail had when the frame was
-        processed. Entries are keyed by track ID. A second track of the same
-        class within ``MAP_OBJECT_MERGE_M`` of an existing marker is dropped:
-        the IoU tracker re-creates IDs often, and without this the image fills
-        with duplicate labels for the same object.
+        processed. There is one marker per object, not one per tracker ID: an
+        anchor first claims the marker with its track ID, otherwise the nearest
+        same-class marker within a gate that grows with the marker's age (a
+        person walking between processed frames is still the same person). The
+        nearest claim wins when two detections want one marker; the other
+        detection becomes a new marker. Person markers expire after
+        ``MAP_OBJECT_TTL_S`` without a detection, so a person who leaves does
+        not stay on the map for the rest of the session.
         """
-        if self.trace is None or not observations:
+        if self.trace is None:
             return
+        store = getattr(self, "_map_objects", None)
+        if store is None:
+            return
+        moment = time.monotonic() if now is None else float(now)
+        self._expire_map_objects(moment)
+        if not observations:
+            return
+
         heading = math.radians(float(self.trace.heading_deg))
         cos_h, sin_h = math.cos(heading), math.sin(heading)
+        entries: list[tuple[int, str, float, float]] = []
         for obs in observations:
             if getattr(obs.status, "value", obs.status) != AnchorStatus.OK.value:
                 continue
             lateral, forward = float(obs.position_g[0]), float(obs.position_g[1])
             if not (math.isfinite(lateral) and math.isfinite(forward)):
                 continue
-            track_id = int(obs.track_id)
-            class_name = str(obs.class_name)
             x = self.trace.x + cos_h * lateral + sin_h * forward
             y = self.trace.y - sin_h * lateral + cos_h * forward
-            duplicate = any(
-                other.class_name == class_name
-                and other.track_id != track_id
-                and math.hypot(other.x - x, other.y - y) < MAP_OBJECT_MERGE_M
-                for other in self._map_objects.values()
-            )
-            if duplicate:
+            entries.append((int(obs.track_id), str(obs.class_name), x, y))
+        if not entries:
+            return
+
+        candidates: list[tuple[int, float, int, int]] = []
+        for index, (track_id, class_name, x, y) in enumerate(entries):
+            if track_id in store and store[track_id].class_name == class_name:
+                candidates.append((0, 0.0, index, track_id))
                 continue
-            self._map_objects[track_id] = MapObject(
-                class_name=class_name, x=x, y=y, track_id=track_id
+            for key, marker in store.items():
+                if marker.class_name != class_name:
+                    continue
+                distance = math.hypot(marker.x - x, marker.y - y)
+                age = max(0.0, moment - float(marker.last_seen))
+                gate = min(
+                    float(MAP_OBJECT_MAX_GATE_M),
+                    float(MAP_OBJECT_GATE_M) + float(MAP_OBJECT_SPEED_MPS) * age,
+                )
+                if distance <= gate:
+                    candidates.append((1, distance, index, key))
+
+        # Greedy by priority then distance: a track-ID match wins, then the
+        # closest pair. Ties keep observation order, so the result is stable.
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        assigned: dict[int, int] = {}
+        used: set[int] = set()
+        for _, _, index, key in candidates:
+            if index in assigned or key in used:
+                continue
+            assigned[index] = key
+            used.add(key)
+
+        for index, (track_id, class_name, x, y) in enumerate(entries):
+            key = assigned.get(index)
+            if key is None:
+                key = self._free_marker_key(store, used, track_id)
+                used.add(key)
+            store[key] = MapObject(
+                class_name=class_name,
+                x=x,
+                y=y,
+                track_id=track_id,
+                last_seen=moment,
             )
 
     def _write_map_image(
@@ -844,10 +993,12 @@ class LiveRunner:
         heading_deg: float,
         nearest: dict,
         observations: list[ObjectAnchor] | None = None,
+        *,
+        ts: float | None = None,
     ) -> None:
         if self.trace is None:
             return
-        self._record_map_objects(observations)
+        self._record_map_objects(observations, now=ts)
         nearest_m = nearest.get("distance_nominal_m")
         meta = MapMeta(
             session_id=self.session_id,
@@ -863,8 +1014,10 @@ class LiveRunner:
             distance_m=self.trace.distance_m,
             steps=self.trace.steps,
             misses=self.trace.misses,
+            gaps=self.trace.gaps,
         )
         try:
+            store = getattr(self, "_map_zones", None)
             image = render_session_map(
                 self.trace.points,
                 grid,
@@ -872,6 +1025,7 @@ class LiveRunner:
                 heading_deg=self.trace.heading_deg,
                 meta=meta,
                 objects=tuple(self._map_objects.values()),
+                zones=resolve_zones(store) if store else (),
             )
             save_session_map(self.config.map_png, image)
         except OSError as exc:
@@ -1386,7 +1540,7 @@ class LiveRunner:
                 "arrival_stable_frames": tracker.stable_frames,
             }
         )
-        return {
+        result = {
             "session_id": self.session_id,
             "database": str(self.db.path) if self.db.path else None,
             "source": self.info.label,
@@ -1408,6 +1562,16 @@ class LiveRunner:
             "avg_process_ms": round(db_summary.get("avg_process_ms", 0.0), 1),
             "errors": list(self._errors),
         }
+        if self.trace is not None:
+            result["trail"] = {
+                "steps": self.trace.steps,
+                "gaps": self.trace.gaps,
+                "route_m": round(self.trace.distance_m, 2),
+                "x_m": round(self.trace.x, 2),
+                "y_m": round(self.trace.y, 2),
+                "heading_deg": round(self.trace.heading_deg, 1),
+            }
+        return result
 
 
 __all__ = ["FrameResult", "LiveConfig", "LiveRunner", "PROFILE_SIZES", "PROFILES"]

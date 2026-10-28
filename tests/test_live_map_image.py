@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import cv2
@@ -18,8 +20,10 @@ import numpy as np
 
 from live.anchors import ObjectAnchor
 from live.map_image import (
+    CAMERA_BGR,
     OBJECT_PALETTE_BGR,
     TRAIL_BGR,
+    WARN_BGR,
     MapMeta,
     MapObject,
     _draw_objects,
@@ -47,6 +51,12 @@ def _trail() -> list[tuple[float, float]]:
 
 def _pixels(image: np.ndarray, colour: tuple[int, int, int]) -> int:
     return int(np.count_nonzero(np.all(image == colour, axis=2)))
+
+
+def _near_pixels(image: np.ndarray, colour: tuple[int, int, int], tol: int = 60) -> int:
+    """Count pixels close to a colour; small text is anti-aliased, not exact."""
+    diff = np.abs(image.astype(np.int16) - np.array(colour, dtype=np.int16))
+    return int(np.count_nonzero(np.all(diff <= tol, axis=2)))
 
 
 def _anchor(
@@ -117,6 +127,41 @@ class TestRenderSessionMap:
         )
         assert out.name == "map.png"
         assert out.exists()
+
+    def test_map_names_start_and_now_and_flags_a_frozen_trail(self, monkeypatch):
+        import live.map_image as map_image_module
+
+        texts: list[str] = []
+        original = cv2.putText
+
+        def spy(img, text, *args, **kwargs):
+            texts.append(str(text))
+            return original(img, text, *args, **kwargs)
+
+        monkeypatch.setattr(map_image_module.cv2, "putText", spy)
+        render_session_map(
+            [(0.0, 0.0)], None, CFG, meta=MapMeta(frame_index=4, steps=0, gaps=6)
+        )
+        assert any("START" in text and "NOW" in text for text in texts)
+        assert any(text.startswith("NO STEP ACCEPTED YET") for text in texts)
+
+        texts.clear()
+        render_session_map(
+            _trail(), None, CFG, meta=MapMeta(frame_index=4, steps=3, gaps=6)
+        )
+        assert "START" in texts
+        assert "NOW" in texts
+        assert not any(text.startswith("NO STEP ACCEPTED YET") for text in texts)
+
+    def test_frozen_warning_is_visible_in_pixels(self):
+        frozen = render_session_map(
+            [(0.0, 0.0)], None, CFG, meta=MapMeta(steps=0, gaps=6)
+        )
+        moving = render_session_map(
+            _trail(), None, CFG, meta=MapMeta(steps=3, gaps=6)
+        )
+        assert _near_pixels(frozen, WARN_BGR) > _near_pixels(moving, WARN_BGR) + 50
+        assert _pixels(frozen, CAMERA_BGR) > 20
 
 
 class TestMapObjects:
@@ -314,6 +359,117 @@ class TestRunnerMapObjects:
         assert image is not None
         assert _pixels(image, object_colors(["chair"])["chair"]) > 20
 
+    def _runner(self) -> LiveRunner:
+        runner = LiveRunner.__new__(LiveRunner)
+        runner.trace = SessionTrace()
+        runner._map_objects = {}
+        return runner
+
+    def test_recreated_track_keeps_one_moving_marker(self):
+        runner = self._runner()
+        runner._record_map_objects([_anchor(1, "person", 0.5, 2.0)], now=100.0)
+        runner._record_map_objects([_anchor(7, "person", 0.5, 3.6)], now=101.5)
+        assert set(runner._map_objects) == {1}
+        marker = runner._map_objects[1]
+        assert marker.track_id == 7
+        assert abs(marker.x - 0.5) <= 1e-9
+        assert abs(marker.y - 3.6) <= 1e-9
+        assert marker.last_seen == 101.5
+
+    def test_walking_person_keeps_one_marker_over_several_frames(self):
+        runner = self._runner()
+        for step, forward in enumerate((2.0, 3.1, 4.2, 5.3)):
+            runner._record_map_objects(
+                [_anchor(10 + step, "person", 0.0, forward)],
+                now=100.0 + 1.2 * step,
+            )
+        assert len(runner._map_objects) == 1
+        marker = next(iter(runner._map_objects.values()))
+        assert abs(marker.y - 5.3) <= 1e-9
+
+    def test_far_same_class_becomes_a_new_marker(self):
+        runner = self._runner()
+        runner._record_map_objects([_anchor(1, "person", 0.0, 2.0)], now=100.0)
+        runner._record_map_objects([_anchor(2, "person", 0.0, 6.0)], now=100.1)
+        assert set(runner._map_objects) == {1, 2}
+
+    def test_nearest_detection_wins_a_contested_marker(self):
+        runner = self._runner()
+        runner._record_map_objects([_anchor(1, "person", 0.0, 2.0)], now=100.0)
+        runner._record_map_objects(
+            [
+                _anchor(3, "person", 0.9, 2.0),
+                _anchor(2, "person", 0.2, 2.0),
+            ],
+            now=101.0,
+        )
+        assert set(runner._map_objects) == {1, 3}
+        assert runner._map_objects[1].track_id == 2
+        assert abs(runner._map_objects[1].x - 0.2) <= 1e-9
+        assert runner._map_objects[3].track_id == 3
+        assert abs(runner._map_objects[3].x - 0.9) <= 1e-9
+
+    def test_person_marker_expires_after_three_seconds(self):
+        runner = self._runner()
+        runner._record_map_objects([_anchor(1, "person", 0.5, 2.0)], now=100.0)
+        runner._record_map_objects(None, now=102.9)
+        assert set(runner._map_objects) == {1}
+        runner._record_map_objects([], now=103.5)
+        assert runner._map_objects == {}
+
+    def test_static_marker_does_not_expire(self):
+        runner = self._runner()
+        runner._record_map_objects([_anchor(1, "chair", 0.5, 2.0)], now=100.0)
+        runner._record_map_objects(None, now=110.0)
+        assert set(runner._map_objects) == {1}
+
+
+class TestRunnerSummaryTrail:
+    def _runner(self) -> LiveRunner:
+        runner = LiveRunner.__new__(LiveRunner)
+        runner.trace = SessionTrace()
+        runner.db = SimpleNamespace(path=None)
+        runner.session_id = None
+        runner.info = SimpleNamespace(label="synthetic", width=640, height=360)
+        runner.proc_w = 320
+        runner.proc_h = 180
+        runner.profile = "fast"
+        runner._goal_lock = threading.Lock()
+        runner._goal_tracker = None
+        runner._goal_agent = None
+        runner.intrinsics_provenance = "default"
+        runner.uncalibrated = True
+        runner._processed = 4
+        runner._started_s = time.monotonic()
+        runner._errors = []
+        return runner
+
+    def test_summary_reports_the_trail(self):
+        runner = self._runner()
+        runner.trace.steps = 3
+        runner.trace.gaps = 7
+        runner.trace.distance_m = 2.5
+        runner.trace.x = 0.5
+        runner.trace.y = 1.25
+        runner.trace.heading_deg = 90.0
+        trail = runner.summary()["trail"]
+        assert trail == {
+            "steps": 3,
+            "gaps": 7,
+            "route_m": 2.5,
+            "x_m": 0.5,
+            "y_m": 1.25,
+            "heading_deg": 90.0,
+        }
+
+    def test_frozen_run_is_visible_in_the_summary(self):
+        runner = self._runner()
+        runner.trace.gaps = 6
+        trail = runner.summary()["trail"]
+        assert trail["steps"] == 0
+        assert trail["gaps"] == 6
+        assert trail["route_m"] == 0.0
+
 
 class TestRunnerMapWiring:
     def test_write_map_image_creates_the_file(self, tmp_path):
@@ -343,6 +499,29 @@ class TestRunnerMapWiring:
             1, _grid(), "GUIDE", 4.0, {"distance_nominal_m": 1.2}
         )
         assert list(tmp_path.iterdir()) == []
+
+    def test_map_write_expires_markers_on_the_supplied_clock(self, tmp_path):
+        runner = LiveRunner.__new__(LiveRunner)
+        runner.config = SimpleNamespace(map_png=str(tmp_path / "session_map.png"))
+        runner.map_cfg = CFG
+        runner.trace = SessionTrace()
+        runner._map_objects = {
+            1: MapObject("person", 0.0, 2.0, 1, last_seen=100.0)
+        }
+        runner._map_error_reported = False
+        runner.session_id = "sess"
+        runner.uncalibrated = False
+        runner._write_map_image(1, None, "GUIDE", 0.0, {}, None, ts=104.0)
+        assert runner._map_objects == {}
+
+    def test_trace_time_uses_video_time_for_files(self):
+        runner = LiveRunner.__new__(LiveRunner)
+        runner.info = SimpleNamespace(is_camera=False, fps=30.0)
+        assert abs(runner._trace_time(60, 1.0) - 2.0) <= 1e-9
+        runner.info = SimpleNamespace(is_camera=True, fps=30.0)
+        assert runner._trace_time(60, 12.5) == 12.5
+        runner.info = SimpleNamespace(is_camera=False, fps=0.0)
+        assert runner._trace_time(60, 12.5) == 12.5
 
     def test_update_trace_passes_plane_and_floor_mask(self):
         from core.config import Intrinsics

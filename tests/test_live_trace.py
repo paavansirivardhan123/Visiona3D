@@ -217,6 +217,38 @@ class TestFitFloorMotion:
         src, dst, _ = _correspondences(0.5, 0.0)
         assert fit_floor_motion(src, dst[:-1], PLANE, K) is None
 
+    def test_slow_cadence_accepts_a_step_beyond_the_fixed_gate(self):
+        # 2.6 m is more than the 2.0 m fallback but plausible in 1.2 s.
+        src, dst, _ = _correspondences(2.6, 0.0)
+        assert fit_floor_motion(src, dst, PLANE, K) is None
+        step = fit_floor_motion(src, dst, PLANE, K, dt_s=1.2)
+        assert step is not None
+        assert abs(float(step.dy) - 2.6) <= 0.08
+        assert abs(float(step.dx)) <= 0.05
+
+    def test_same_step_is_rejected_when_it_would_be_too_fast(self):
+        src, dst, _ = _correspondences(2.6, 0.0)
+        assert fit_floor_motion(src, dst, PLANE, K, dt_s=0.8) is None
+
+    def test_absurd_jump_is_rejected_even_with_elapsed_time(self):
+        src, dst, _ = _correspondences(5.0, 0.0)
+        assert fit_floor_motion(src, dst, PLANE, K, dt_s=0.5) is None
+
+    def test_yaw_search_widens_with_elapsed_time(self):
+        # 30 deg is outside the fixed 12 deg yaw search but well inside one
+        # second at the starting turn-rate limit.
+        src, dst, _ = _correspondences(0.3, 30.0)
+        step = fit_floor_motion(src, dst, PLANE, K, dt_s=1.0)
+        assert step is not None
+        assert abs(math.degrees(step.get_yaw_rad()) - 30.0) <= 0.6
+        assert abs(float(step.dy) - 0.3) <= 0.06
+
+    def test_unusable_elapsed_time_keeps_the_fixed_gate(self):
+        src, dst, _ = _correspondences(2.6, 0.0)
+        assert fit_floor_motion(src, dst, PLANE, K, dt_s=0.0) is None
+        assert fit_floor_motion(src, dst, PLANE, K, dt_s=float("nan")) is None
+        assert fit_floor_motion(src, dst, PLANE, K, dt_s=-1.0) is None
+
 
 class TestTrackFloorFeatures:
     def test_blank_frames_are_rejected(self):
@@ -360,3 +392,68 @@ class TestSessionTrace:
         trace.reset_reference()
         assert trace._prev_gray is None
         assert trace.update_frame(gray, PLANE, floor, K) is None
+
+    def test_elapsed_time_reaches_the_estimator(self, monkeypatch):
+        seen: list[float | None] = []
+
+        def fake_estimate(*args, **kwargs):
+            seen.append(kwargs.get("dt_s"))
+            return None
+
+        monkeypatch.setattr(trace_module, "estimate_floor_step", fake_estimate)
+        trace = self._trace()
+        gray = _texture(180, 320)
+        floor = np.ones_like(gray, dtype=bool)
+        trace.update_frame(gray, PLANE, floor, K, ts=5.0)
+        trace.update_frame(gray, PLANE, floor, K, ts=7.5)
+        assert seen == [2.5]
+
+    def test_short_baseline_is_skipped_without_a_gap(self, monkeypatch):
+        seen: list[float | None] = []
+
+        def fake_estimate(*args, **kwargs):
+            seen.append(kwargs.get("dt_s"))
+            return None
+
+        monkeypatch.setattr(trace_module, "estimate_floor_step", fake_estimate)
+        trace = self._trace()
+        gray = _texture(180, 320)
+        floor = np.ones_like(gray, dtype=bool)
+        trace.update_frame(gray, PLANE, floor, K, ts=0.0)
+        assert trace.update_frame(gray, PLANE, floor, K, ts=0.2) is None
+        assert seen == []
+        assert trace.gaps == 0
+        trace.update_frame(gray, PLANE, floor, K, ts=0.7)
+        assert seen == [0.7]
+
+    def test_gaps_count_every_rejected_frame(self, monkeypatch):
+        monkeypatch.setattr(
+            trace_module, "estimate_floor_step", lambda *a, **k: None
+        )
+        trace = self._trace()
+        gray = _texture(180, 320)
+        floor = np.ones_like(gray, dtype=bool)
+        trace.update_frame(gray, PLANE, floor, K)
+        assert trace.gaps == 0
+        trace.update_frame(gray, PLANE, floor, K)
+        assert (trace.gaps, trace.misses) == (1, 1)
+        trace.update_frame(gray, PLANE, floor, K)
+        assert (trace.gaps, trace.misses) == (2, 2)
+        trace.update_frame(gray, None, None, K)
+        assert trace.gaps == 3
+        assert trace.misses == 0
+
+    def test_accepted_step_does_not_clear_the_gap_count(self, monkeypatch):
+        steps = iter([None, Odometry2D(0.0, 1.0)])
+        monkeypatch.setattr(
+            trace_module, "estimate_floor_step", lambda *a, **k: next(steps)
+        )
+        trace = self._trace()
+        gray = _texture(180, 320)
+        floor = np.ones_like(gray, dtype=bool)
+        trace.update_frame(gray, PLANE, floor, K)
+        trace.update_frame(gray, PLANE, floor, K)
+        trace.update_frame(gray, PLANE, floor, K)
+        assert trace.steps == 1
+        assert trace.gaps == 1
+        assert trace.misses == 0

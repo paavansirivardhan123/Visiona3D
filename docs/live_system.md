@@ -128,19 +128,53 @@ GPU (`device=` on the backends) raise the rate. No timing here is a promise.
   depth) or the full candidate search list, and `reached` after arrival.
 - **Session map image (`--map-png`):** a standalone PNG rewritten after every
   processed frame with the current 2.5D view, the estimated walked trail, the
-  detected objects, the start point, the camera heading and a scale bar. Every
-  object with a certified 3D anchor is drawn as a labelled marker: one colour
-  per class name, assigned in sorted order, so the same class always keeps the
-  same colour and different classes differ (twelve colours; they repeat beyond
-  twelve classes in one image). A label is skipped when it would overlap an
-  already drawn one, so dense scenes stay readable; the marker is still drawn,
-  and a small legend lists the colour of every class present. Markers are accumulated per track ID in world
-  coordinates, so the image shows the objects met along the path rather than
-  only the last frame. Because the IoU tracker re-creates IDs when a track
-  drops, a new track of the same class within 0.5 m of an existing marker is
-  merged into it (`MAP_OBJECT_MERGE_M`, TO TUNE ON REAL DATA) instead of adding
-  a duplicate label. The footer states that the trail is estimated. Nothing
-  reads the file back.
+  detected objects, the start point, the camera heading and a scale bar. The
+  route is labelled `START` at the origin and `NOW` at the camera; when no step
+  has been accepted the labels collapse to `START = NOW` and the footer prints
+  `NO STEP ACCEPTED YET (N gaps)` (`N` is the total rejected-frame count), so a
+  frozen trail is not mistaken for a missing feature. Every object with a
+  certified 3D anchor is drawn as a labelled marker: one colour per class name,
+  assigned in sorted order, so the same class always keeps the same colour and
+  different classes differ (twelve colours; they repeat beyond twelve classes).
+  A label is skipped when it would overlap an already drawn one, so dense
+  scenes stay readable; the marker is still drawn, and a small legend lists the
+  colour of every class present.
+
+  Each object has **one marker that moves with it**, keyed by marker rather
+  than tracker ID. An anchor first claims the marker with its track ID;
+  otherwise it claims the nearest same-class marker within
+  `MAP_OBJECT_GATE_M` (0.6 m, TO TUNE ON REAL DATA) plus
+  `MAP_OBJECT_SPEED_MPS` (1.6 m/s, TO TUNE ON REAL DATA) times the marker's age,
+  capped at 8 m. The nearest claim wins when two detections want one marker in
+  the same frame; the other detection becomes a new marker. Person markers
+  disappear after `MAP_OBJECT_TTL_S` (3 s, TO TUNE ON REAL DATA) without a
+  detection, so someone who leaves does not stay on the map forever; static
+  classes are kept for the session. Expiry advances on the same clock as the
+  trail (video time for files), so slow non-realtime processing does not expire
+  people between processed frames. The footer states that the trail is
+  estimated. Nothing reads the file back. The same `steps`, `gaps` and
+  `route_m` values appear in `--summary-json` under `trail`.
+
+  The image also carries an accumulated ground-zone layer, built by
+  `live/zones.py` from every processed frame's BEV grid:
+
+  | Colour | Meaning | Source |
+  | --- | --- | --- |
+  | green | route actually walked, length printed in the legend | estimated pose |
+  | blue | certified walkable floor, area in m² printed in the legend | `CELL_FREE` cells |
+  | grey | wall | wall-labelled points falling in the cell |
+  | bright red | danger / blocked | `CELL_OCCUPIED` for any other reason |
+  | dark red | never detected | one-cell band around the known area |
+
+  Wall evidence wins over danger, and danger must outvote walkable evidence so
+  an obstacle that appears briefly and then moves does not leave a permanent
+  red cell. Cells near a detected object are not voted as danger
+  (`ZONE_OBJECT_CLEAR_M`, TO TUNE ON REAL DATA), because the object already has
+  a class-coloured marker and a person must not paint a permanent red zone.
+  World cells are 0.2 m (`ZONE_CELL_M`, TO TUNE ON REAL DATA) and the dark-red
+  band is one cell wide (`ZONE_UNKNOWN_BAND_CELLS`, TO TUNE ON REAL DATA).
+  The zone layer shares the trail's estimated pose, so it drifts with the trail
+  and is display-only.
 
 ### Estimated trail (display only)
 
@@ -160,10 +194,24 @@ the floor image sideways, and a fit that only estimated yaw would draw the trail
 along the camera's gaze instead of the direction actually travelled.
 
 A step is accepted only when the fit explains the tracked pixels better than a
-standing-still model. Rejected steps leave a gap in the trail instead of
-inventing motion. It assumes a flat floor, ignores lens distortion (the
-wide-angle demo intrinsics are not calibrated), and drifts with distance. It is
-a convenience picture, never a navigation input.
+standing-still model. It must also fit within `MAX_SPEED_MPS` (2.5 m/s, TO TUNE
+ON REAL DATA) and `MAX_YAW_RATE_DPS` (60 deg/s, TO TUNE ON REAL DATA) multiplied
+by the elapsed time between the two frames, so a slow cadence does not look
+like an impossible jump. The fixed limits `MAX_STEP_M` and `MAX_STEP_YAW_DEG`
+apply only when elapsed time is unknown, and the yaw search widens with time up
+to `SEARCH_YAW_CAP_DEG` (45 deg, TO TUNE ON REAL DATA). Rejected steps leave a
+gap in the trail instead of inventing motion; `gaps` counts every rejected
+frame (including frames without a usable plane) while `misses` counts the
+current run of them. For a video file the elapsed time is video time
+(`frame_index / fps`), so a non-realtime run does not starve the gate; a camera
+uses wall-clock capture time. Baselines shorter than `TRACE_MIN_BASELINE_S`
+(0.5 s, TO TUNE ON REAL DATA) are skipped without counting a gap, because
+adjacent high-rate frames move only a pixel or two and the standing-still model
+would win every time. Any interval longer than `MAX_TRACE_GAP_S` (8 s,
+TO TUNE ON REAL DATA) restarts the reference and counts as a gap. The estimate
+assumes a flat floor, ignores lens distortion
+(the wide-angle demo intrinsics are not calibrated), and drifts with distance. It
+is a convenience picture, never a navigation input.
 
 ## Goals, voice input and arrival
 
@@ -275,10 +323,11 @@ network or API key in tests).
   The HUD is live but not video-rate.
 - **Uncalibrated demo intrinsics.** Distances from `--hfov` are estimates and
   are labelled as such in the HUD and the session row.
-- **No world-map accumulation.** Each frame produces its own BEV grid; the
-  rolling map in `mapping/rolling.py` is not wired into the live loop, so BEV
-  snapshots are per-frame. The `--map-png` trail is a separate display-only
-  estimate and does not move BEV cells into a world frame.
+- **No world map for navigation.** Each frame produces its own BEV grid and
+  guidance uses only that grid; `mapping/rolling.py` is still not wired into
+  the live loop. The `--map-png` image now accumulates BEV cells into a
+  display-only world layer (route, walkable, wall, danger, unknown), but
+  nothing reads it back, so it is not a navigation world model.
 - **Monocular depth bias.** Metric depth from an indoor Small checkpoint is
   used as-is; no per-camera affine calibration has been validated.
 - **Camera mode not exercised here.** The verified run used a video file; a

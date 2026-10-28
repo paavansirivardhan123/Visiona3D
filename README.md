@@ -76,7 +76,7 @@ Every question is printed as `Question N of 7`, a one-line `example`, and
 | 2. How many frames? | `10`, `60`, `100` | Fewer frames = faster run; blank means the whole video | all frames |
 | 3. Speed or quality? | `1` fast, `2` balanced, `3` quality | Model input-size profile | `1` (fast) |
 | 4. Spoken guidance? | `yes` / `no` (or `1` / `0`) | `no` also turns the microphone off | `yes` |
-| 5. Save the session map image? | `reports\session_map.png` or a folder | Writes the bird's-eye map with the trail and detected objects | `yes`, `reports/session_map.png` |
+| 5. Save the session map image? | `reports\session_map.png` or a folder | Writes the bird's-eye map with the walked route, walkable/wall/danger zones and detected objects | `yes`, `reports/session_map.png` |
 | 6. Save an annotated video? | `reports\live\demo.mp4` | Also runs without a window; useful for recordings | `no` |
 | 7. Calibration file? | `reports\camera_intrinsics.json` | Blank estimates the lens; type `?` for calibration steps | blank (estimates) |
 
@@ -171,14 +171,41 @@ full 3D mesh.
 
 **Saved session map.** `--map-png reports\session_map.png` writes a standalone
 picture after every processed frame: the current 2.5D view around the camera,
-the path you have walked so far, the start point and a scale bar. Detected
-objects appear as labelled markers in world coordinates, one colour per class
-(same class = same colour, different classes differ), accumulated per track so
-objects met earlier on the walk stay on the map; nearby markers of the same
-class merge into one to absorb tracker ID churn. The trail is *estimated* from
-floor-plane motion between processed frames - there is no IMU or wheel odometry
-- so it drifts and is labelled as an estimate on the image. It is a convenience
-view for reviewing a session; guidance and safety never read it.
+the path you have walked so far, the start point and a scale bar. The walked
+route is drawn from an explicit **START** to **NOW**; when no step has been
+accepted yet the two labels collapse into `START = NOW` and the footer says
+`NO STEP ACCEPTED YET (N gaps)`, so a frozen trail is not mistaken for a missing
+feature. Detected objects appear as labelled markers in world coordinates, one
+colour per class (same class = same colour, different classes differ).
+Each object keeps **one moving marker**: a re-created tracker ID is rebound to
+the nearest same-class marker within a gate that grows with elapsed time
+(`MAP_OBJECT_GATE_M` 0.6 m plus `MAP_OBJECT_SPEED_MPS` 1.6 m/s, capped at 8 m,
+all `TO TUNE ON REAL DATA`), so a person who walks through the view moves their
+marker instead of leaving a trail of copies. If two detections want one marker
+in the same frame, the nearest wins and the other becomes a new marker. Person
+markers disappear after `MAP_OBJECT_TTL_S` = 3 s without a detection
+(`TO TUNE ON REAL DATA`); static classes stay for the session. The same
+`steps`, `gaps` and `route_m` values are written to `--summary-json` under
+`trail`, so a frozen run is visible without opening the image.
+
+The picture also carries a ground-zone layer accumulated over the whole
+session: **green** is the route actually walked and its length is printed in
+the legend, **blue** is certified walkable floor with its measured area, **grey**
+is wall, **bright red** is danger (blocked or occupied) and a **dark-red** band
+marks the edge of what was never detected. People and other detected objects
+only get class-coloured markers - they never paint a red zone, so someone
+standing in front of you does not leave a permanent hazard blob. Zone cells are
+0.2 m (`TO TUNE ON REAL DATA`), a detected object clears danger votes within
+0.6 m (`TO TUNE ON REAL DATA`), and the dark-red band is one cell wide
+(`TO TUNE ON REAL DATA`). The zone layer uses the same estimated pose as the
+trail, so it drifts with it. The trail is *estimated* from floor-plane motion
+between processed frames - there is no IMU or wheel odometry - so it drifts and
+is labelled as an estimate on the image. A step is accepted only if it fits a
+plausible walking speed (2.5 m/s) and turn rate (60 deg/s) multiplied by the
+elapsed time between the two frames (`TO TUNE ON REAL DATA`), so slow
+processing does not freeze the route while absurd jumps are still rejected.
+It is a convenience view for reviewing a session; guidance and safety never
+read it.
 
 **Video playback.** A video file plays on the wall clock. If the CPU needs
 longer than one video frame, older frames are skipped rather than queued, so
@@ -323,7 +350,7 @@ Every option is available directly on the same entry point. `python starter.py
 | `--loop` | Repeat the video |
 | `--no-realtime` | Read every frame back-to-back instead of keeping the video on the wall clock |
 | `--db path.db`, `--no-db` | Choose the database, or turn persistence off |
-| `--map-png path.png` | Save a top-down session map with the estimated walked trail after every processed frame |
+| `--map-png path.png` | Save a top-down session map with the estimated walked route, walkable/wall/danger zones and detected objects after every processed frame |
 | `--summary-json file.json` | Write the run summary |
 
 Two useful examples:
@@ -432,9 +459,10 @@ local and not committed.
 
 - Not field-tested on a physical camera or with blind users.
 - The map is a 2.5D grid plus one 3D anchor per object, not a mesh.
-- Each frame builds its own grid; BEV cells are not accumulated into a world
-  map. The saved `--map-png` trail is a separate display-only estimate and is
-  not used by guidance.
+- Each frame builds its own grid for planning. The saved `--map-png` also
+  accumulates BEV cells into a display-only world layer, but guidance uses only
+  the current frame's grid; the saved route and zone layer are an estimate and
+  are not read by guidance or safety.
 - Monocular depth bias is uncorrected, including the 1.5 m arrival distance.
 - Voice goals and arrival thresholds are tested offline only; microphone,
   speech-to-text and real-room distances still need a field test. The Gemini
