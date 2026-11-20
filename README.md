@@ -83,7 +83,7 @@ flowchart TD
     I1 -- Yes --> I3{Path Found?}
 
     I3 -- No --> I4[STOP_BLOCKED]
-    I3 -- Yes --> I5{Clearance < 0.20 m?}
+    I3 -- Yes --> I5{"Clearance < 0.20 m?"}
 
     I5 -- Yes --> I6[CAUTION]
     I5 -- No --> I7[GUIDE]
