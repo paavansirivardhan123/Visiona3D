@@ -75,33 +75,38 @@ def split_routes(
             tag_val = tags.get(stratify_by, "unknown")
             tag_groups.setdefault(tag_val, []).append(rid)
 
-        # Shuffle within each group and concatenate
-        routes_shuffled = []
+        # Split each tag group on its own so every split sees every tag value
+        # that has enough routes. Groups of fewer than 3 routes cannot be
+        # spread over three splits and go to train (with a warning).
+        train_out: list[str] = []
+        val_out: list[str] = []
+        test_out: list[str] = []
         for tag_val in sorted(tag_groups.keys()):
             group = np.array(tag_groups[tag_val])
-            perm = rng.permutation(len(group))
-            routes_shuffled.extend(group[perm])
-        routes_shuffled = np.array(routes_shuffled)
-
-        # Warn if any tag value would be missing from test
-        n_test = int(len(routes_shuffled) * test_frac)
-        if n_test > 0:
-            test_routes_preview = routes_shuffled[-n_test:]
-            test_tags = set()
-            for rid in test_routes_preview:
-                tags = _load_route_tags(dataset_root, rid)
-                test_tags.add(tags.get(stratify_by, "unknown"))
-            all_tags = set()
-            for rid in routes:
-                tags = _load_route_tags(dataset_root, rid)
-                all_tags.add(tags.get(stratify_by, "unknown"))
-            missing = all_tags - test_tags
-            if missing:
+            group = group[rng.permutation(len(group))]
+            g = len(group)
+            if g < 3:
                 warnings.warn(
-                    f"Stratification by '{stratify_by}': test split missing tag values: {missing}. "
-                    f"Consider more routes or different seed.",
+                    f"Stratification by '{stratify_by}': tag value '{tag_val}' has only "
+                    f"{g} route(s); all placed in train.",
                     UserWarning,
                 )
+                train_out.extend(group.tolist())
+                continue
+            g_test = max(1, int(round(g * test_frac))) if test_frac > 0 else 0
+            g_val = max(1, int(round(g * val_frac))) if val_frac > 0 else 0
+            while g - g_test - g_val < 1:  # always keep at least one train route
+                if g_val >= g_test and g_val > 0:
+                    g_val -= 1
+                elif g_test > 0:
+                    g_test -= 1
+                else:
+                    break
+            g_train = g - g_val - g_test
+            train_out.extend(group[:g_train].tolist())
+            val_out.extend(group[g_train:g_train + g_val].tolist())
+            test_out.extend(group[g_train + g_val:].tolist())
+        return train_out, val_out, test_out
 
     n = len(routes_shuffled)
     n_train = int(n * train_frac)

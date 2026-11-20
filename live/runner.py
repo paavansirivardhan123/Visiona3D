@@ -537,8 +537,24 @@ class LiveRunner:
                 if self._max_reached():
                     self._stop.set()
                     break
+        except Exception as exc:  # report instead of dying silently
+            self._report_worker_failure("perception", exc)
         finally:
             self._finished.set()
+
+    def _report_worker_failure(self, name: str, exc: BaseException) -> None:
+        """Record a fatal worker error and stop the session loudly."""
+        import traceback
+
+        message = f"{name} thread crashed: {type(exc).__name__}: {exc}"
+        self._errors.append(message)
+        print(f"[ERROR] {message}", flush=True)
+        traceback.print_exc()
+        self._stop.set()
+        try:
+            self.speech.speak("Navigation stopped because of an internal error.", emergency=True)
+        except Exception as speech_exc:  # never let reporting raise
+            self._errors.append(f"speech: {type(speech_exc).__name__}: {speech_exc}")
 
     def _process_file_loop(self) -> None:
         index = int(self.config.start_frame)
@@ -561,6 +577,8 @@ class LiveRunner:
                     elapsed = time.monotonic() - started
                     if elapsed < frame_period:
                         time.sleep(frame_period - elapsed)
+        except Exception as exc:  # report instead of dying silently
+            self._report_worker_failure("perception", exc)
         finally:
             self._finished.set()
 

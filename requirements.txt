@@ -1,9 +1,13 @@
+# Mirrors pyproject.toml. Prefer `uv sync`; this file is for plain pip users.
+numpy==1.26.4
 opencv-python==4.9.0.80
-ultralytics==8.2.0
 pyttsx3==2.90
-python-dotenv
 torch>=2.4.0
 torchvision>=0.19.0
-numpy==1.26.4
+ultralytics>=8.3.0
+transformers>=5.5.0
+timm>=1.0.26
+python-dotenv
 SpeechRecognition>=3.10.0
-pyaudio>=0.2.13
+pyaudio>=0.2.14
+pynput>=1.8.1

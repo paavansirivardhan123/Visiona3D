@@ -18,3 +18,10 @@ dependencies = [
     "transformers>=5.5.0",
     "pynput>=1.8.1",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "audio"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["core", "geometry", "calibration", "perception", "mapping", "planning", "evaluation", "dataset", "live"]

@@ -99,6 +99,9 @@ def calibrate_from_correspondences(
         per_view_errors.append(error)
 
     return {
+        # Measured from real checkerboard views. Callers that feed synthetic
+        # points (generate_synthetic_calibration) override this key.
+        "provenance": "calibrated",
         "fx": float(K[0, 0]),
         "fy": float(K[1, 1]),
         "cx": float(K[0, 2]),

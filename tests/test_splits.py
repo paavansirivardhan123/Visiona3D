@@ -67,9 +67,17 @@ def test_d4_stratification_keeps_tags_in_test():
             tags = _load_route_tags(Path(tmpdir), rid)
             test_envs.add(tags.get("env", "unknown"))
 
-        # With 20 routes and 0.2 test frac = 4 test routes, both values should appear
-        # (but we warn if not, don't fail - handled by warning in function)
-        assert len(test_envs) >= 1
+        # Every tag value present in the dataset must reach val and test.
+        all_envs = set()
+        for rid in routes:
+            all_envs.add(_load_route_tags(Path(tmpdir), rid).get("env", "unknown"))
+        assert test_envs == all_envs
+        val_envs = {
+            _load_route_tags(Path(tmpdir), rid).get("env", "unknown") for rid in val
+        }
+        assert val_envs == all_envs
+        assert set(train) | set(val) | set(test) == set(routes)
+        assert len(train) + len(val) + len(test) == len(routes)
 
 
 def test_d4_leave_one_route_out():

@@ -29,7 +29,14 @@ from planning.costmap import Costmap
 from planning.targets import find_explore_target
 
 # Guidance thresholds - labelled TO TUNE ON REAL DATA
-DEFAULT_CAUTION_CLEARANCE_M: float = 0.20  # TO TUNE ON REAL DATA: minimum clearance triggering CAUTION
+# None means "relative": CAUTION when the path comes within DEFAULT_CAUTION_MARGIN_M of the
+# inflation boundary. An absolute 0.20 m threshold could never fire, because every passable
+# cell already has clearance above the inflation radius (0.45 m by default).
+DEFAULT_CAUTION_CLEARANCE_M: Optional[float] = None  # TO TUNE ON REAL DATA
+DEFAULT_CAUTION_MARGIN_M: float = 0.15  # TO TUNE ON REAL DATA
+# Lateral clearance is measured in a window around the user, not the whole forward half-plane.
+LATERAL_WINDOW_X_M: float = 1.5
+LATERAL_WINDOW_Y_M: float = 3.0
 DEFAULT_LOOKAHEAD_DISTANCE_M: float = 1.5  # TO TUNE ON REAL DATA
 DEFAULT_TURN_THRESHOLD_DEG: float = 15.0  # TO TUNE ON REAL DATA
 
@@ -110,7 +117,31 @@ def _distance_to_turn(
     return float(accum)
 
 
-def compute_guidance(
+def compute_guidance(*args: Any, **kwargs: Any) -> Guidance:
+    """Compute guidance; never raises. Any internal failure becomes STOP_UNCLEAR.
+
+    See ``_compute_guidance_impl`` for the parameters.
+    """
+    try:
+        return _compute_guidance_impl(*args, **kwargs)
+    except (TypeError, ValueError, AssertionError, KeyError, IndexError, RuntimeError) as exc:
+        if isinstance(exc, TypeError) and "argument" in str(exc):
+            raise  # caller bug (bad signature), not a runtime failure
+        return Guidance(
+            decision="STOP_UNCLEAR",
+            heading_deg=0.0,
+            lookahead_point_g=(0.0, 0.0, 0.0),
+            distance_to_turn_m=0.0,
+            left_clearance_m=0.0,
+            right_clearance_m=0.0,
+            nearest_obstacle={"label": "unknown", "distance_nominal_m": float("nan"), "bearing_deg": 0.0},
+            reasons=[f"internal error: {type(exc).__name__}: {exc}"],
+            abstain_features={},
+            timings={},
+        )
+
+
+def _compute_guidance_impl(
     costmap: Costmap,
     path_result: Optional[PathResult] = None,
     abstain_decision: Optional[AbstainDecision] = None,
@@ -121,7 +152,7 @@ def compute_guidance(
     plane_status: str = "OK",
     scale_status: str = "OK",
     nearest_obstacle: Optional[dict[str, Any]] = None,
-    caution_clearance_m: float = DEFAULT_CAUTION_CLEARANCE_M,
+    caution_clearance_m: Optional[float] = DEFAULT_CAUTION_CLEARANCE_M,
     lookahead_dist_m: float = DEFAULT_LOOKAHEAD_DISTANCE_M,
 ) -> Guidance:
     """Compute guidance decision and navigation signals.
@@ -221,9 +252,9 @@ def compute_guidance(
     # 3. Lateral clearances (left X < 0, right X > 0 in forward view Y > 0)
     c_grid, r_grid = np.meshgrid(np.arange(cfg.n_cols), np.arange(cfg.n_rows))
     wx_all, wy_all = cell_to_world(c_grid, r_grid, cfg)
-    fwd = wy_all > 0.0
-    left_mask = fwd & (wx_all < -1e-3)
-    right_mask = fwd & (wx_all > 1e-3)
+    fwd = (wy_all > 0.0) & (wy_all <= LATERAL_WINDOW_Y_M)
+    left_mask = fwd & (wx_all < -1e-3) & (wx_all >= -LATERAL_WINDOW_X_M)
+    right_mask = fwd & (wx_all > 1e-3) & (wx_all <= LATERAL_WINDOW_X_M)
 
     left_clr = float(np.min(costmap.clearance_m[left_mask])) if np.any(left_mask) else float("inf")
     right_clr = float(np.min(costmap.clearance_m[right_mask])) if np.any(right_mask) else float("inf")
@@ -279,10 +310,15 @@ def compute_guidance(
     min_path_clr = path_result.min_clearance_m
     reasons: list[str] = []
 
-    if min_path_clr < float(caution_clearance_m):
+    if caution_clearance_m is None:
+        caution_threshold = float(costmap.inflation_radius_m) + DEFAULT_CAUTION_MARGIN_M
+    else:
+        caution_threshold = float(caution_clearance_m)
+
+    if min_path_clr < caution_threshold:
         decision = "CAUTION"
         reasons.append(
-            f"Path clearance {min_path_clr:.2f} m is below caution threshold {caution_clearance_m:.2f} m"
+            f"Path clearance {min_path_clr:.2f} m is below caution threshold {caution_threshold:.2f} m"
         )
     else:
         decision = "GUIDE"

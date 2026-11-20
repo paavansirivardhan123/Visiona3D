@@ -56,7 +56,9 @@ class YoloDetectorBackend:
         predict_kwargs = {"conf": self.conf, "verbose": False}
         if self.device is not None:
             predict_kwargs["device"] = self.device
-        results = self._model.predict(image, **predict_kwargs)
+        # Ultralytics treats NumPy arrays as OpenCV-style BGR; our contract is RGB.
+        image_bgr = np.ascontiguousarray(image[:, :, ::-1])
+        results = self._model.predict(image_bgr, **predict_kwargs)
 
         detections: list[Det2D] = []
         for result in results:
