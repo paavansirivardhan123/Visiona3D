@@ -1,0 +1,676 @@
+{
+ "ade20k_train": {
+  "images_read": 400,
+  "images_total": 20210,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  ],
+  "objects_labeled_fraction": 0.0,
+  "image_size_min": [
+   175,
+   200
+  ],
+  "image_size_max": [
+   1024,
+   1124
+  ],
+  "pixel_share_other_labeled": 0.5013079007699387,
+  "pixel_share_ignore": 0.09844326829580294,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.06444610316786824,
+    "images_with_class": 181,
+    "images_with_class_fraction": 0.4525,
+    "mean_area_when_present": 0.1376048713125591
+   },
+   "walkable_path": {
+    "pixel_share": 0.02071550496306436,
+    "images_with_class": 85,
+    "images_with_class_fraction": 0.2125,
+    "mean_area_when_present": 0.08977742983320991
+   },
+   "road": {
+    "pixel_share": 0.04521046566835894,
+    "images_with_class": 91,
+    "images_with_class_fraction": 0.2275,
+    "mean_area_when_present": 0.17192518119483513
+   },
+   "wall": {
+    "pixel_share": 0.14857134546928605,
+    "images_with_class": 225,
+    "images_with_class_fraction": 0.5625,
+    "mean_area_when_present": 0.24958243585531129
+   },
+   "glass": {
+    "pixel_share": 0.0183834984046456,
+    "images_with_class": 88,
+    "images_with_class_fraction": 0.22,
+    "mean_area_when_present": 0.08091675614843745
+   },
+   "staircase": {
+    "pixel_share": 0.008057139984965093,
+    "images_with_class": 44,
+    "images_with_class_fraction": 0.11,
+    "mean_area_when_present": 0.07079618359295693
+   },
+   "door": {
+    "pixel_share": 0.011341577461874329,
+    "images_with_class": 62,
+    "images_with_class_fraction": 0.155,
+    "mean_area_when_present": 0.0669549760847074
+   },
+   "sky": {
+    "pixel_share": 0.08352319581419575,
+    "images_with_class": 171,
+    "images_with_class_fraction": 0.4275,
+    "mean_area_when_present": 0.20965455366798785
+   }
+  }
+ },
+ "ade20k_val": {
+  "images_read": 500,
+  "images_total": 2000,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  ],
+  "objects_labeled_fraction": 0.0,
+  "image_size_min": [
+   180,
+   200
+  ],
+  "image_size_max": [
+   975,
+   984
+  ],
+  "pixel_share_other_labeled": 0.5171505307436566,
+  "pixel_share_ignore": 0.08636514366195325,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.06563802094523899,
+    "images_with_class": 240,
+    "images_with_class_fraction": 0.48,
+    "mean_area_when_present": 0.1315067591100566
+   },
+   "walkable_path": {
+    "pixel_share": 0.014983811013482236,
+    "images_with_class": 84,
+    "images_with_class_fraction": 0.168,
+    "mean_area_when_present": 0.07315775283004096
+   },
+   "road": {
+    "pixel_share": 0.03854830557906367,
+    "images_with_class": 90,
+    "images_with_class_fraction": 0.18,
+    "mean_area_when_present": 0.19940970685158382
+   },
+   "wall": {
+    "pixel_share": 0.16350064062061576,
+    "images_with_class": 300,
+    "images_with_class_fraction": 0.6,
+    "mean_area_when_present": 0.2655494235056258
+   },
+   "glass": {
+    "pixel_share": 0.020509071422842244,
+    "images_with_class": 128,
+    "images_with_class_fraction": 0.256,
+    "mean_area_when_present": 0.07717300380687114
+   },
+   "staircase": {
+    "pixel_share": 0.0037897124791869173,
+    "images_with_class": 37,
+    "images_with_class_fraction": 0.074,
+    "mean_area_when_present": 0.04258650187241477
+   },
+   "door": {
+    "pixel_share": 0.015968928791318032,
+    "images_with_class": 92,
+    "images_with_class_fraction": 0.184,
+    "mean_area_when_present": 0.08683450117891885
+   },
+   "sky": {
+    "pixel_share": 0.07354583474264237,
+    "images_with_class": 184,
+    "images_with_class_fraction": 0.368,
+    "mean_area_when_present": 0.22445214530246352
+   }
+  }
+ },
+ "coco_stuff_val": {
+  "images_read": 500,
+  "images_total": 1000,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  ],
+  "objects_labeled_fraction": 1.0,
+  "image_size_min": [
+   159,
+   224
+  ],
+  "image_size_max": [
+   640,
+   640
+  ],
+  "pixel_share_other_labeled": 0.7355654799272685,
+  "pixel_share_ignore": 0.03922456210410865,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.024587129654483533,
+    "images_with_class": 104,
+    "images_with_class_fraction": 0.208,
+    "mean_area_when_present": 0.11412355204863346
+   },
+   "walkable_path": {
+    "pixel_share": 0.024669289746359215,
+    "images_with_class": 81,
+    "images_with_class_fraction": 0.162,
+    "mean_area_when_present": 0.14965048454275306
+   },
+   "road": {
+    "pixel_share": 0.016803249600445668,
+    "images_with_class": 59,
+    "images_with_class_fraction": 0.118,
+    "mean_area_when_present": 0.1434965184579053
+   },
+   "wall": {
+    "pixel_share": 0.0867585451574686,
+    "images_with_class": 208,
+    "images_with_class_fraction": 0.416,
+    "mean_area_when_present": 0.20892859014848839
+   },
+   "glass": {
+    "pixel_share": 0.008278340335410726,
+    "images_with_class": 49,
+    "images_with_class_fraction": 0.098,
+    "mean_area_when_present": 0.08349243124571365
+   },
+   "staircase": {
+    "pixel_share": 0.0016845515393595636,
+    "images_with_class": 5,
+    "images_with_class_fraction": 0.01,
+    "mean_area_when_present": 0.1628756099726841
+   },
+   "door": {
+    "pixel_share": 0.005519176757209215,
+    "images_with_class": 33,
+    "images_with_class_fraction": 0.066,
+    "mean_area_when_present": 0.0781108814837517
+   },
+   "sky": {
+    "pixel_share": 0.056909675177886275,
+    "images_with_class": 120,
+    "images_with_class_fraction": 0.24,
+    "mean_area_when_present": 0.2399998513277355
+   }
+  }
+ },
+ "gdd_test": {
+  "images_read": 500,
+  "images_total": 936,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    4
+   ]
+  ],
+  "objects_labeled_fraction": 0.0,
+  "image_size_min": [
+   1024,
+   1024
+  ],
+  "image_size_max": [
+   1280,
+   1280
+  ],
+  "pixel_share_other_labeled": 0.5383166427612305,
+  "pixel_share_ignore": 0.0,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "walkable_path": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "road": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "wall": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "glass": {
+    "pixel_share": 0.4616833572387695,
+    "images_with_class": 500,
+    "images_with_class_fraction": 1.0,
+    "mean_area_when_present": 0.4616833572387695
+   },
+   "staircase": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "door": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "sky": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   }
+  }
+ },
+ "gdd_train": {
+  "images_read": 400,
+  "images_total": 2980,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    4
+   ]
+  ],
+  "objects_labeled_fraction": 0.0,
+  "image_size_min": [
+   1024,
+   1024
+  ],
+  "image_size_max": [
+   1280,
+   1280
+  ],
+  "pixel_share_other_labeled": 0.4989392547607422,
+  "pixel_share_ignore": 0.0,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "walkable_path": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "road": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "wall": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "glass": {
+    "pixel_share": 0.5010607452392578,
+    "images_with_class": 400,
+    "images_with_class_fraction": 1.0,
+    "mean_area_when_present": 0.5010607452392578
+   },
+   "staircase": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "door": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "sky": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   }
+  }
+ },
+ "stairs_kaist_train": {
+  "images_read": 400,
+  "images_total": 788,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    5
+   ]
+  ],
+  "objects_labeled_fraction": 0.0,
+  "image_size_min": [
+   640,
+   640
+  ],
+  "image_size_max": [
+   3024,
+   4032
+  ],
+  "pixel_share_other_labeled": 0.7664245396540658,
+  "pixel_share_ignore": 0.0,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "walkable_path": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "road": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "wall": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "glass": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "staircase": {
+    "pixel_share": 0.23357546034593418,
+    "images_with_class": 400,
+    "images_with_class_fraction": 1.0,
+    "mean_area_when_present": 0.26142668650229794
+   },
+   "door": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "sky": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   }
+  }
+ },
+ "stairs_kaist_valid": {
+  "images_read": 190,
+  "images_total": 190,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    5
+   ]
+  ],
+  "objects_labeled_fraction": 0.0,
+  "image_size_min": [
+   640,
+   640
+  ],
+  "image_size_max": [
+   720,
+   1280
+  ],
+  "pixel_share_other_labeled": 0.8266504265280331,
+  "pixel_share_ignore": 0.0,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "walkable_path": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "road": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "wall": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "glass": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "staircase": {
+    "pixel_share": 0.17334957347196692,
+    "images_with_class": 190,
+    "images_with_class_fraction": 1.0,
+    "mean_area_when_present": 0.22610402246664837
+   },
+   "door": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "sky": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   }
+  }
+ },
+ "coco_stuff_train": {
+  "images_read": 400,
+  "images_total": 22408,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  ],
+  "objects_labeled_fraction": 1.0,
+  "image_size_min": [
+   192,
+   256
+  ],
+  "image_size_max": [
+   640,
+   640
+  ],
+  "pixel_share_other_labeled": 0.5160492081189428,
+  "pixel_share_ignore": 0.051619552263857234,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.04520123114457904,
+    "images_with_class": 129,
+    "images_with_class_fraction": 0.3225,
+    "mean_area_when_present": 0.1417350969762417
+   },
+   "walkable_path": {
+    "pixel_share": 0.04288803561353001,
+    "images_with_class": 108,
+    "images_with_class_fraction": 0.27,
+    "mean_area_when_present": 0.16097014981823576
+   },
+   "road": {
+    "pixel_share": 0.04804491622636707,
+    "images_with_class": 91,
+    "images_with_class_fraction": 0.2275,
+    "mean_area_when_present": 0.20254529100647417
+   },
+   "wall": {
+    "pixel_share": 0.15986787904008168,
+    "images_with_class": 251,
+    "images_with_class_fraction": 0.6275,
+    "mean_area_when_present": 0.2597962052526047
+   },
+   "glass": {
+    "pixel_share": 0.02008702262888202,
+    "images_with_class": 92,
+    "images_with_class_fraction": 0.23,
+    "mean_area_when_present": 0.08247844063823603
+   },
+   "staircase": {
+    "pixel_share": 0.0013682898726035226,
+    "images_with_class": 12,
+    "images_with_class_fraction": 0.03,
+    "mean_area_when_present": 0.045682744931224324
+   },
+   "door": {
+    "pixel_share": 0.012577865287156757,
+    "images_with_class": 62,
+    "images_with_class_fraction": 0.155,
+    "mean_area_when_present": 0.07663018624447797
+   },
+   "sky": {
+    "pixel_share": 0.1022959998039998,
+    "images_with_class": 139,
+    "images_with_class_fraction": 0.3475,
+    "mean_area_when_present": 0.292433744230609
+   }
+  }
+ },
+ "hf_sidewalk": {
+  "images_read": 400,
+  "images_total": 1000,
+  "unreadable_masks": 0,
+  "supervised_sets": [
+   [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  ],
+  "objects_labeled_fraction": 0.0,
+  "image_size_min": [
+   1080,
+   1920
+  ],
+  "image_size_max": [
+   1080,
+   1920
+  ],
+  "pixel_share_other_labeled": 0.3428572048611111,
+  "pixel_share_ignore": 0.13708237123842593,
+  "classes": {
+   "floor": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "walkable_path": {
+    "pixel_share": 0.34419970703125,
+    "images_with_class": 394,
+    "images_with_class_fraction": 0.985,
+    "mean_area_when_present": 0.34944132693527924
+   },
+   "road": {
+    "pixel_share": 0.11591476538387345,
+    "images_with_class": 354,
+    "images_with_class_fraction": 0.885,
+    "mean_area_when_present": 0.13097713602697567
+   },
+   "wall": {
+    "pixel_share": 0.01929449508101852,
+    "images_with_class": 215,
+    "images_with_class_fraction": 0.5375,
+    "mean_area_when_present": 0.03589673503445306
+   },
+   "glass": {
+    "pixel_share": 0.0,
+    "images_with_class": 0,
+    "images_with_class_fraction": 0.0,
+    "mean_area_when_present": 0.0
+   },
+   "staircase": {
+    "pixel_share": 0.0008202823591820988,
+    "images_with_class": 53,
+    "images_with_class_fraction": 0.1325,
+    "mean_area_when_present": 0.006190810257978104
+   },
+   "door": {
+    "pixel_share": 0.0022222270447530864,
+    "images_with_class": 69,
+    "images_with_class_fraction": 0.1725,
+    "mean_area_when_present": 0.012882475621757023
+   },
+   "sky": {
+    "pixel_share": 0.0376089470003858,
+    "images_with_class": 327,
+    "images_with_class_fraction": 0.8175,
+    "mean_area_when_present": 0.04600482813502851
+   }
+  }
+ }
+}

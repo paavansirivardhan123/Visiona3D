@@ -15,6 +15,68 @@ local parser with no key at all.
 
 ---
 
+## Project status and research direction
+
+**What this repository contains.** A working navigation prototype (everything from
+"End-to-end workflow" down) that runs on one RGB camera: SegFormer-B0 for
+floor/wall segmentation, YOLO11n for objects, Depth Anything V2 for depth, and
+optionally MobileSAM for floor refinement. This is the **original Visiona3D**, and
+it is kept unchanged as the reference and the fallback.
+
+**What we are trying to achieve.** Replace the two perception models (SegFormer +
+YOLO11n) with **one YOLO26-based multitask model**, so the pipeline becomes
+*YOLO26 model + Depth Anything V2*. The new model has an instance head (boxes and
+masks for the 80 COCO classes) and a semantic head for 8 environment classes
+(`floor, walkable_path, road, wall, glass, staircase, door, sky`). The target is
+at least 10 FPS end to end on a CPU-only laptop. It is only adopted if it beats
+the old pair by measurement.
+
+**What exists today.**
+
+| Part | State |
+| --- | --- |
+| Original pipeline (SegFormer + YOLO11n + depth + planning + voice) | Working, tested offline (see [Tests](#tests)); not field-tested |
+| Whole-application benchmark | Done once, on a loaded laptop: **0.36 FPS** (see [Performance](#performance-measured-not-promised)) |
+| Unified model code (`notebooks/visiona_mtl/`) | Built and dry-run tested: shared trunk, new semantic head, per-class masked loss, two-stream trainer, evaluation metrics, converters |
+| Datasets | Installed locally and converted: COCO, COCO-Stuff, ADE20K, sidewalk-semantic, GDD glass, stairs |
+| **First training run (E1)** | **Done. Not good enough to replace the old models.** |
+| Integration of the new model into the pipeline | **Not done, deliberately** (waits for the checks below) |
+
+**First run (E1), measured on this laptop.** A small run: 3,000 COCO images,
+320 px, backbone frozen, 10,000 steps (about 7 hours), no sidewalk data.
+
+| Objects, 1,000 COCO validation images | Box mAP50-95 | Mask mAP50-95 |
+| --- | --- | --- |
+| Pretrained yolo26n-seg (baseline) | 0.394 | 0.329 |
+| Unified model E1 | 0.342 | 0.294 |
+
+| Environment IoU (300 validation images) | floor | wall | sky | glass | staircase | walkable_path | road |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| COCO-Stuff | 0.32 | 0.46 | 0.47 | 0.04 | 0.00 | 0.00 | 0.00 |
+| ADE20K | 0.61 | 0.51 | 0.71 | 0.19 | 0.05 | 0.00 | 0.00 |
+
+Objects got worse, `walkable_path` and `road` were never learned, and glass and
+staircase pixels were mostly missed (false-walkable 28% on COCO-Stuff, 10% on
+ADE20K). Model-only speed on the laptop was about 220 to 320 ms per forward pass
+at 320 to 480 px, about the same as plain yolo26n-seg. The likely cause is too
+little walkable-path/road data and a small, frozen training run. This is a
+reasoned explanation, not a proven one. Raw numbers are in
+[`notebooks/results/`](notebooks/results).
+
+**What we will improve.** Train again with the full installed data (22,408 COCO
+images, all 20,210 ADE20K training images, 1,000 sidewalk images), then partly
+unfreeze the backbone (E2). Add data and labels for what a blind pedestrian
+needs and COCO lacks (curb, step-down, pothole, pole, bollard, tactile paving),
+label 100+ frames from the real camera for an honest test, and re-calibrate the
+safety layer before integration. 10 FPS also needs a faster depth step and
+cheaper geometry, because SegFormer + YOLO were only about 24% of a frame.
+
+The full methodology, data inventory, results, next experiments, pass criteria
+and the plan for integrating the new model are in
+[`notebooks/Future Work.md`](notebooks/Future%20Work.md).
+
+---
+
 ## End-to-end workflow
 
 One diagram for the whole runtime: what Visiona3D does when it is turned on,
@@ -600,7 +662,9 @@ core/                 shared configuration constants and detection types
 evaluation/, dataset/ offline metrics and synthetic dataset generation
 scripts/              model download, calibration capture/run, demos, evaluations
 tests/                offline tests: no model, camera, network or speech engine
-docs/                 deeper documentation, indexed in docs/README.md
+docs/                 deeper documentation (listed under Documentation below)
+notebooks/            research on the unified YOLO26 model: notebook, visiona_mtl/
+                      library, results/, and "Future Work.md" (plan and methodology)
 database/             SQLite session store, created on first run
 reports/              maps, videos and summaries written by commands
 weights/, sample-vid/, MobileSAM/   downloaded models and local inputs
@@ -642,6 +706,24 @@ CPU only, 640x360 processing, bundled 1920x1080 video, warm frames:
 That is roughly 0.5-0.8 HUD updates per second. A warm smoke run measured
 1.8 s on its second frame; its first frame took 30 s including model warm-up.
 The display stays responsive and always shows the latest processed frame.
+
+**Whole-application benchmark (Phase 1 of the unified-model work).** The real
+live loop (default `fast` profile, 180 measured frames over 3 videos, 2 passes,
+CPU only) was timed stage by stage on a laptop that was **loaded and short of
+memory** (about 144 MB free on average), so these figures are slower than the
+table above and are not a clean measurement:
+
+| Stage | Mean per frame | Share |
+| --- | --- | --- |
+| Depth Anything V2 inference | 1160 ms | 41.9% |
+| Floor-plane fit (RANSAC) | 431 ms | 15.6% |
+| YOLO11n | 262 ms | 9.5% |
+| SegFormer-B0 | 224 ms | 8.1% |
+| Trail, zones and map image | 244 ms | 8.8% |
+| **End to end** | **2767 ms (p95 3604 ms)** | **0.36 FPS** |
+
+SegFormer + YOLO together were 24% of the frame, so replacing them cannot reach
+10 FPS on its own. A re-run on an unloaded laptop is still pending.
 
 ---
 
@@ -687,18 +769,31 @@ local and not committed.
 
 ## Documentation
 
-The [docs index](docs/README.md) lists the supporting documents with a
-one-line summary each. The main ones:
+Suggested reading order for a new contributor: this page, `live_system.md`, then
+`mapping_planning.md` and `perception_backends.md` for the layer you are changing.
 
-- [`docs/live_system.md`](docs/live_system.md) - operating guide, synchronisation,
-  session map and trail model, database schema, measured latency.
-- [`docs/perception_backends.md`](docs/perception_backends.md) - models, fusion,
-  evaluation and tuning.
-- [`docs/mapping_planning.md`](docs/mapping_planning.md) - grid conventions,
-  certification, planner and guidance.
-- [`docs/annotation_guide.md`](docs/annotation_guide.md) - mask and box labels.
-- [`docs/capture_protocol.md`](docs/capture_protocol.md) - real-world data
-  collection.
+- [`docs/live_system.md`](docs/live_system.md) - the one-process live loop: stages,
+  frame/time synchronisation, HUD, saved session map and trail estimation, zone
+  layer, goals and voice, SQLite schema, measured latency.
+- [`docs/perception_backends.md`](docs/perception_backends.md) - segmentation,
+  depth and detection backends, model IDs and folders, fake backends, SegFormer +
+  MobileSAM refinement, evaluation and tuning.
+- [`docs/mapping_planning.md`](docs/mapping_planning.md) - frame and grid
+  conventions, BEV certification, costmap, A*, path smoothing, guidance decisions,
+  synthetic results.
+- [`docs/annotation_guide.md`](docs/annotation_guide.md) - mask class indices,
+  per-class rules, special cases, frame sampling, distance ground truth.
+- [`docs/capture_protocol.md`](docs/capture_protocol.md) - camera height and pitch,
+  checkerboard calibration, routes, recording format, split rules, privacy.
+- [`geometry/notation.md`](geometry/notation.md) - frame definitions and sign
+  conventions shared by every module.
+- [`notebooks/Future Work.md`](notebooks/Future%20Work.md) - the unified YOLO26
+  model: methodology, data, first-run results, next experiments and the plan for
+  integrating it into this pipeline.
+
+Every numeric default in these documents is a starting point marked
+`TO TUNE ON REAL DATA`. None is a validated accuracy claim, and the automated
+results in `mapping_planning.md` are synthetic unless stated otherwise.
 
 Code-level conventions are in [`geometry/notation.md`](geometry/notation.md).
 

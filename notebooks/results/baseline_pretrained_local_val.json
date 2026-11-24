@@ -1,0 +1,7 @@
+{
+ "box_map50_95": 0.39414047262689217,
+ "mask_map50_95": 0.3293635366833836,
+ "imgsz": 640,
+ "images": "local 1,000-image COCO val2017 subset (seed 0)",
+ "note": "pretrained yolo26n-seg, evaluated on this laptop (CPU) before any training"
+}

@@ -1,0 +1,310 @@
+{
+ "name": "E1_frozen_backbone",
+ "baseline_pretrained": {
+  "box_map50_95": 0.39414047262689217,
+  "mask_map50_95": 0.3293635366833836
+ },
+ "E1_frozen_backbone_instance_branch": {
+  "box_map50_95": 0.34224107876707643,
+  "mask_map50_95": 0.29354805722290983
+ },
+ "instance_mask_map_change_vs_baseline": -0.035815479460473754,
+ "semantic": {
+  "coco_stuff_val": {
+   "images": 300,
+   "miou": 0.17612717283153517,
+   "per_class": {
+    "floor": {
+     "iou": 0.3157784166872667,
+     "pixel_recall": 0.3898105888611277,
+     "pixel_miss_rate": 0.6101894111388724,
+     "boundary_iou": 0.1882860236330174,
+     "image_miss_rate": 0.5689655172413793,
+     "images_with_class": 58
+    },
+    "walkable_path": {
+     "iou": 0.0,
+     "pixel_recall": 0.0,
+     "pixel_miss_rate": 1.0,
+     "boundary_iou": 0.0,
+     "image_miss_rate": 1.0,
+     "images_with_class": 28
+    },
+    "road": {
+     "iou": 6.674453529117304e-05,
+     "pixel_recall": 6.674453529117304e-05,
+     "pixel_miss_rate": 0.9999332554647088,
+     "boundary_iou": 0.0002452628329548674,
+     "image_miss_rate": 1.0,
+     "images_with_class": 19
+    },
+    "wall": {
+     "iou": 0.4585501948519455,
+     "pixel_recall": 0.6324165722397544,
+     "pixel_miss_rate": 0.3675834277602456,
+     "boundary_iou": 0.18595270898751198,
+     "image_miss_rate": 0.3418803418803419,
+     "images_with_class": 117
+    },
+    "glass": {
+     "iou": 0.04134978204785002,
+     "pixel_recall": 0.17048290794992643,
+     "pixel_miss_rate": 0.8295170920500736,
+     "boundary_iou": 0.05236334834656081,
+     "image_miss_rate": 0.9,
+     "images_with_class": 20
+    },
+    "staircase": {
+     "iou": 0.0,
+     "pixel_recall": 0.0,
+     "pixel_miss_rate": 1.0,
+     "boundary_iou": 0.0,
+     "image_miss_rate": 1.0,
+     "images_with_class": 2
+    },
+    "door": {
+     "iou": 0.12265213925059792,
+     "pixel_recall": 0.19139125025917478,
+     "pixel_miss_rate": 0.8086087497408252,
+     "boundary_iou": 0.04893452175625607,
+     "image_miss_rate": 0.9285714285714286,
+     "images_with_class": 14
+    },
+    "sky": {
+     "iou": 0.47062010527933,
+     "pixel_recall": 0.8015689383649706,
+     "pixel_miss_rate": 0.1984310616350294,
+     "boundary_iou": 0.25177097432334944,
+     "image_miss_rate": 0.24561403508771928,
+     "images_with_class": 57
+    }
+   },
+   "false_walkable_of_predicted_walkable": 0.28467046134310997,
+   "false_walkable_rate_on_nonwalkable_gt": 0.0051947555504170614,
+   "predicted_walkable_pixels": 1362435,
+   "predict_ms_median": 146.31475001806393
+  },
+  "ade20k_val": {
+   "images": 300,
+   "miou": 0.2730188802377923,
+   "per_class": {
+    "floor": {
+     "iou": 0.6069625895126708,
+     "pixel_recall": 0.6535401466716241,
+     "pixel_miss_rate": 0.3464598533283759,
+     "boundary_iou": 0.4040495871006507,
+     "image_miss_rate": 0.2702702702702703,
+     "images_with_class": 185
+    },
+    "walkable_path": {
+     "iou": 0.0,
+     "pixel_recall": 0.0,
+     "pixel_miss_rate": 1.0,
+     "boundary_iou": 0.0,
+     "image_miss_rate": 1.0,
+     "images_with_class": 19
+    },
+    "road": {
+     "iou": 0.0013676221354358559,
+     "pixel_recall": 0.0013676221354358559,
+     "pixel_miss_rate": 0.9986323778645642,
+     "boundary_iou": 0.00013848967859942513,
+     "image_miss_rate": 1.0,
+     "images_with_class": 18
+    },
+    "wall": {
+     "iou": 0.5138401269694834,
+     "pixel_recall": 0.6787853945671333,
+     "pixel_miss_rate": 0.3212146054328667,
+     "boundary_iou": 0.295308112232997,
+     "image_miss_rate": 0.27802690582959644,
+     "images_with_class": 223
+    },
+    "glass": {
+     "iou": 0.18495327512332724,
+     "pixel_recall": 0.5145244788546324,
+     "pixel_miss_rate": 0.4854755211453677,
+     "boundary_iou": 0.14805300279881725,
+     "image_miss_rate": 0.4470588235294118,
+     "images_with_class": 85
+    },
+    "staircase": {
+     "iou": 0.04904931506849315,
+     "pixel_recall": 0.06926582787811257,
+     "pixel_miss_rate": 0.9307341721218875,
+     "boundary_iou": 0.05327991162307071,
+     "image_miss_rate": 0.7857142857142857,
+     "images_with_class": 14
+    },
+    "door": {
+     "iou": 0.12130347825335201,
+     "pixel_recall": 0.32276228912642735,
+     "pixel_miss_rate": 0.6772377108735727,
+     "boundary_iou": 0.10332385850204073,
+     "image_miss_rate": 0.74,
+     "images_with_class": 50
+    },
+    "sky": {
+     "iou": 0.706674634839576,
+     "pixel_recall": 0.8366891627890456,
+     "pixel_miss_rate": 0.16331083721095443,
+     "boundary_iou": 0.32171106552634365,
+     "image_miss_rate": 0.23214285714285715,
+     "images_with_class": 56
+    }
+   },
+   "false_walkable_of_predicted_walkable": 0.09792564221662663,
+   "false_walkable_rate_on_nonwalkable_gt": 0.007565524249014813,
+   "predicted_walkable_pixels": 4816093,
+   "predict_ms_median": 134.3336999998428
+  },
+  "gdd_test": {
+   "images": 300,
+   "miou": 0.4516025680396504,
+   "per_class": {
+    "floor": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "walkable_path": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "road": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "wall": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "glass": {
+     "iou": 0.4516025680396504,
+     "pixel_recall": 0.5212607519912352,
+     "pixel_miss_rate": 0.47873924800876483,
+     "boundary_iou": 0.08547991120788306,
+     "image_miss_rate": 0.39,
+     "images_with_class": 300
+    },
+    "staircase": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "door": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "sky": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    }
+   },
+   "false_walkable_of_predicted_walkable": null,
+   "false_walkable_rate_on_nonwalkable_gt": null,
+   "predicted_walkable_pixels": 0,
+   "predict_ms_median": 139.24170000245795
+  },
+  "stairs_kaist_valid": {
+   "images": 190,
+   "miou": 0.8335248690332733,
+   "per_class": {
+    "floor": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "walkable_path": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "road": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "wall": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "glass": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "staircase": {
+     "iou": 0.8335248690332733,
+     "pixel_recall": 0.8905905654425776,
+     "pixel_miss_rate": 0.10940943455742232,
+     "boundary_iou": 0.35663520966569884,
+     "image_miss_rate": 0.10526315789473684,
+     "images_with_class": 152
+    },
+    "door": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    },
+    "sky": {
+     "iou": null,
+     "pixel_recall": null,
+     "pixel_miss_rate": null,
+     "boundary_iou": null,
+     "image_miss_rate": null,
+     "images_with_class": 0
+    }
+   },
+   "false_walkable_of_predicted_walkable": null,
+   "false_walkable_rate_on_nonwalkable_gt": null,
+   "predicted_walkable_pixels": 0,
+   "predict_ms_median": 137.1194499952253
+  }
+ }
+}
